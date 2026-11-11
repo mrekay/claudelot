@@ -31,6 +31,7 @@
 
   <!-- CLAUDE MODE -->
   <div class="app" id="claudeView">
+    <div class="col col-left" id="leftCol">
     <aside class="side" id="sidePanel" aria-label="Projeler">
       <div class="panel-h">Projeler <span class="ph-acts"><button class="start-btn" id="startBtn" title="Bir projede oturum başlat (Ctrl+Shift+P)" aria-haspopup="true" aria-expanded="false"><i class="fa-solid fa-play"></i> Proje Başlat <i class="fa-solid fa-chevron-down sb-car"></i></button><button class="ghost icon" data-panel="side" title="Paneli gizle (Ctrl+Shift+E)" aria-label="Projeler panelini gizle"><i class="fa-solid fa-angles-left"></i></button></span></div>
       <div class="start-panel" id="startPanel" hidden>
@@ -39,22 +40,35 @@
         <button class="sp-add" id="addProjBtn"><i class="fa-solid fa-folder-plus"></i> Proje ekle</button>
       </div>
       <div class="side-scroll" id="side"></div>
-      <div class="usage" id="usage"></div>
     </aside>
-    <button class="rail rail-left" id="sideRail" data-panel="side" hidden title="Projeleri göster (Ctrl+Shift+E)"><i class="fa-solid fa-folder-tree"></i><span>Projeler</span></button>
+    <button class="sec-bar" id="sideBar" data-panel="side" hidden title="Projeleri göster (Ctrl+Shift+E)"><i class="fa-solid fa-folder-tree"></i><span>Projeler</span><i class="fa-solid fa-chevron-down sec-car"></i></button>
+    <div class="usage" id="usage"></div>
+    <button class="sec-bar" id="usageBar" data-panel="usage" hidden title="Kullanımı göster (Ctrl+Shift+U)"><i class="fa-solid fa-chart-column"></i><span>Haftalık kullanım</span><b class="sec-v" id="usageBarV"></b><i class="fa-solid fa-chevron-up sec-car"></i></button>
+    </div>
+    <div class="rail rail-left" id="leftRail" hidden>
+      <button data-panel="side" title="Projeleri göster (Ctrl+Shift+E)"><i class="fa-solid fa-folder-tree"></i><span>Projeler</span></button>
+      <button data-panel="usage" title="Kullanımı göster (Ctrl+Shift+U)"><i class="fa-solid fa-chart-column"></i><span>Kullanım</span></button>
+    </div>
     <main class="center">
       <div class="tabs" id="tabs" role="tablist"></div>
       <div class="term-slot" id="centerSlot"></div>
     </main>
-    <button class="rail rail-right" id="queueRail" data-panel="queue" hidden title="Kararları göster (Ctrl+Shift+D)"><i class="fa-solid fa-hand"></i><span>Kararlar</span><b class="rail-n" id="railCount" hidden></b></button>
+    <div class="rail rail-right" id="rightRail" hidden>
+      <button data-panel="queue" title="Kararları göster (Ctrl+Shift+D)"><i class="fa-solid fa-hand"></i><span>Kararlar</span><b class="rail-n" id="railCount" hidden></b></button>
+      <button data-panel="agents" title="Ajanları göster (Ctrl+Shift+J)"><i class="fa-solid fa-robot"></i><span>Ajanlar</span><b class="rail-n" id="railAgents" hidden></b></button>
+    </div>
+    <div class="col col-right" id="rightCol">
     <aside class="queue" id="queuePanel" aria-label="Kararını bekleyenler">
       <div class="panel-h">Kararını bekleyenler <span class="ph-acts"><span class="count" id="qCount">0</span><button class="ghost icon" data-panel="queue" title="Paneli gizle (Ctrl+Shift+D)" aria-label="Karar panelini gizle"><i class="fa-solid fa-angles-right"></i></button></span></div>
       <div class="queue-scroll" id="queue"></div>
-      <div class="agents">
-        <div class="panel-h">Aktif ajanlar ve workflow'lar</div>
-        <div id="agents"></div>
-      </div>
     </aside>
+    <button class="sec-bar" id="queueBar" data-panel="queue" hidden title="Kararları göster (Ctrl+Shift+D)"><i class="fa-solid fa-hand"></i><span>Kararını bekleyenler</span><b class="sec-v warn" id="queueBarV"></b><i class="fa-solid fa-chevron-down sec-car"></i></button>
+    <div class="agents" id="agentsPanel">
+      <div class="panel-h">Aktif ajanlar ve workflow'lar <span class="ph-acts"><button class="ghost icon" data-panel="agents" title="Gizle (Ctrl+Shift+J)" aria-label="Ajanlar bölümünü gizle"><i class="fa-solid fa-eye-slash"></i></button></span></div>
+      <div id="agents"></div>
+    </div>
+    <button class="sec-bar" id="agentsBar" data-panel="agents" hidden title="Ajanları göster (Ctrl+Shift+J)"><i class="fa-solid fa-robot"></i><span>Aktif ajanlar</span><b class="sec-v" id="agentsBarV"></b><i class="fa-solid fa-chevron-up sec-car"></i></button>
+    </div>
   </div>
 
   <!-- IDE MODE -->

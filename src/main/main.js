@@ -8,7 +8,7 @@ const fsp = fs.promises;
 const os = require('os');
 const http = require('http');
 const crypto = require('crypto');
-const { execFile, execFileSync } = require('child_process');
+const { execFile, execFileSync, spawn } = require('child_process');
 const pty = require('@lydell/node-pty');
 const { appIcon } = require('./icon');
 
@@ -335,6 +335,94 @@ async function takeOver(sessionId) {
   return { ok: true, cwd: s.cwd };
 }
 
+/* ---------------- console mirror for outside sessions ----------------
+   mirror.cs attaches to the console of an outside Claude session, streams its screen
+   and types keys into it. It is compiled once with the csc.exe that ships with Windows
+   and cached in the data folder (keyed by a hash of the source). */
+const mirrors = new Map(); // id -> child process
+let mirrorBuild = null;
+function mirrorBinary() {
+  if (mirrorBuild) return mirrorBuild;
+  mirrorBuild = (async () => {
+    const src = fs.readFileSync(path.join(__dirname, 'mirror.cs'), 'utf8');
+    const hash = crypto.createHash('sha1').update(src).digest('hex').slice(0, 10);
+    const exe = path.join(DATA, `mirror-${hash}.exe`);
+    if (fs.existsSync(exe)) return exe;
+    const win = process.env.WINDIR || 'C:\\Windows';
+    const csc = ['Framework64', 'Framework'].map(f => path.join(win, 'Microsoft.NET', f, 'v4.0.30319', 'csc.exe')).find(f => fs.existsSync(f));
+    if (!csc) throw new Error('Terminal bağlantısı için gereken .NET derleyicisi (csc.exe) bulunamadı.');
+    fs.mkdirSync(DATA, { recursive: true });
+    const cs = path.join(DATA, `mirror-${hash}.cs`);
+    fs.writeFileSync(cs, src);
+    await new Promise((resolve, reject) => execFile(csc, ['-nologo', '-target:winexe', '-optimize', '-out:' + exe, cs],
+      { windowsHide: true, timeout: 60000 }, (err, out) => (err ? reject(new Error('Terminal bağlantı aracı derlenemedi. ' + String(out || err.message).trim())) : resolve())));
+    try { fs.unlinkSync(cs); } catch (_) {}
+    return exe;
+  })();
+  mirrorBuild.catch(() => { mirrorBuild = null; });
+  return mirrorBuild;
+}
+async function startMirror(sessionId) {
+  const s = liveList.find(x => x.sessionId === sessionId);
+  if (!s) throw new Error('Oturum artık açık değil.');
+  const exe = await mirrorBinary();
+  const id = crypto.randomUUID();
+  const child = spawn(exe, [String(s.pid)], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+  mirrors.set(id, child);
+  let buf = '';
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', d => {
+    buf += d;
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i); buf = buf.slice(i + 1);
+      const p = line.split(' ');
+      if (p[0] === 'F') send('mirror:frame', id, { cols: +p[1], rows: +p[2], cx: +p[3], cy: +p[4], vis: p[5] === '1', vt: Buffer.from(p[6] || '', 'base64').toString('utf8') });
+      else if (p[0] === 'E') send('mirror:error', id, 'Terminale bağlanılamadı (Windows hata kodu ' + p[1] + ').');
+    }
+  });
+  child.stdin.on('error', () => {});
+  child.on('exit', () => { mirrors.delete(id); send('mirror:exit', id); });
+  child.on('error', e => { mirrors.delete(id); send('mirror:error', id, e.message); });
+  return { id, pid: s.pid };
+}
+/* xterm sends VT text; the console wants key events: [virtual key, char, control state] */
+const CTRL = { SHIFT: 0x10, ALT: 0x02, CTRLK: 0x08 };
+const SEQ_KEYS = { A: 38, B: 40, C: 39, D: 37, H: 36, F: 35 };
+const TILDE_KEYS = { 2: 45, 3: 46, 5: 33, 6: 34 };
+function keysOf(data) {
+  const out = [];
+  const modState = m => { m = (+m || 1) - 1; return (m & 1 ? CTRL.SHIFT : 0) | (m & 2 ? CTRL.ALT : 0) | (m & 4 ? CTRL.CTRLK : 0); };
+  for (let i = 0; i < data.length;) {
+    const rest = data.slice(i);
+    let m;
+    if ((m = rest.match(/^\x1b\[(?:1;(\d))?([ABCDHF])/)) || (m = rest.match(/^\x1bO()([ABCDHF])/))) { out.push([SEQ_KEYS[m[2]], 0, modState(m[1])]); i += m[0].length; continue; }
+    if ((m = rest.match(/^\x1b\[(\d)(?:;(\d))?~/)) && TILDE_KEYS[m[1]]) { out.push([TILDE_KEYS[m[1]], 0, modState(m[2])]); i += m[0].length; continue; }
+    if (rest.startsWith('\x1b[Z')) { out.push([9, 9, CTRL.SHIFT]); i += 3; continue; }
+    const ch = data.charCodeAt(i);
+    if (ch === 0x1b && i + 1 < data.length && data[i + 1] !== '\x1b' && data[i + 1] !== '[' && data[i + 1] !== 'O') {
+      const c2 = data.charCodeAt(i + 1);
+      out.push([c2 >= 97 && c2 <= 122 ? c2 - 32 : 0, c2, CTRL.ALT]); i += 2; continue; // Alt+key
+    }
+    if (ch === 13) out.push([13, 13, 0]);
+    else if (ch === 0x7f || ch === 8) out.push([8, 8, 0]);
+    else if (ch === 9) out.push([9, 9, 0]);
+    else if (ch === 0x1b) out.push([27, 27, 0]);
+    else if (ch === 10) out.push([13, 10, CTRL.CTRLK]);
+    else if (ch > 0 && ch < 27) out.push([64 + ch, ch, CTRL.CTRLK]); // Ctrl+letter
+    else out.push([ch >= 48 && ch <= 57 ? ch : ch >= 97 && ch <= 122 ? ch - 32 : ch >= 65 && ch <= 90 ? ch : 0, ch, ch >= 65 && ch <= 90 ? CTRL.SHIFT : 0]);
+    i++;
+  }
+  return out;
+}
+function mirrorInput(id, data) {
+  const child = mirrors.get(id);
+  if (!child || typeof data !== 'string' || !data) return;
+  const keys = keysOf(data.slice(0, 100000));
+  for (let i = 0; i < keys.length; i += 400) child.stdin.write('I ' + keys.slice(i, i + 400).map(k => k.join(' ')).join(' ') + '\n');
+}
+function stopMirror(id) { const c = mirrors.get(id); if (c) { try { c.kill(); } catch (_) {} mirrors.delete(id); } }
+
 /* ---------------- weekly usage (tokens from transcripts) ---------------- */
 /* API list prices, $ per million tokens (Anthropic first-party, Nov 2026).
    read = cache read price; cache writes cost 1.25x input (5 min) or 2x input (1 hour).
@@ -653,6 +741,7 @@ function spawnTerminal(opts) {
   return { id, sessionId };
 }
 function killAll() {
+  for (const id of [...mirrors.keys()]) stopMirror(id);
   for (const p of ptys.values()) { try { p.kill(); } catch (_) {} }
   ptys.clear();
 }
@@ -797,6 +886,9 @@ function registerIpc() {
   ipcMain.handle('live:list', () => scanLive());
   ipcMain.handle('live:tail', (_e, sid, offset) => tailTranscript(sid, offset));
   ipcMain.handle('live:takeover', (_e, sid) => takeOver(sid));
+  ipcMain.handle('mirror:start', (_e, sid) => startMirror(sid));
+  ipcMain.on('mirror:input', (_e, id, data) => mirrorInput(id, data));
+  ipcMain.on('mirror:stop', (_e, id) => stopMirror(id));
 
   ipcMain.handle('pty:spawn', (_e, opts) => spawnTerminal(opts));
   ipcMain.on('pty:write', (_e, id, data) => { const p = ptys.get(id); if (p) p.write(data); });
@@ -808,6 +900,8 @@ function registerIpc() {
     const note = new Notification({ title: n.title, body: n.body || '', silent: !config.settings.sound, icon: appIcon(64, 1) });
     liveNotifications.add(note);
     note.on('click', () => { showWindow(); if (n.tabId) send('focus-tab', n.tabId); });
+    // blink the taskbar button until the window is looked at
+    if (win && !win.isDestroyed() && !win.isFocused()) { win.flashFrame(true); win.once('focus', () => win.flashFrame(false)); }
     note.on('close', () => liveNotifications.delete(note));
     setTimeout(() => liveNotifications.delete(note), 60000);
     note.show();

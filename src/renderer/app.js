@@ -12,7 +12,7 @@ let CFG = null, INFO = null;
 const S = {
   projects: [], history: {}, tabs: [], active: null,
   pending: [], agents: [], notifs: [], unread: 0, usage: null,
-  lastTool: {}, modified: {}, mode: 'claude', collapsed: {}, showAll: {}, live: [],
+  lastTool: {}, modified: {}, mode: 'claude', collapsed: {}, showAll: {}, live: [], extAttn: new Map(),
 };
 const early = new Map();
 let seq = 1;
@@ -134,7 +134,7 @@ async function refreshHistory(pid) {
 async function refreshAllHistory() { await Promise.all(S.projects.map(p => refreshHistory(p.id))); }
 async function refreshUsage() {
   try { S.usage = await api.invoke('usage:get'); } catch (_) {}
-  renderUsage(); renderStatus();
+  renderUsage(); renderStatus(); renderPanelBadges();
 }
 
 /* ---------------- terminals ---------------- */
@@ -205,19 +205,21 @@ function fitActive() {
 function activate(id) {
   const t = tabById(id); if (!t) return;
   S.active = id;
+  t.attn = null;
+  if (t.kind === 'watch') S.extAttn.delete(t.sessionId);
   if (S.mode === 'ide' && t.projectId && t.projectId !== IDE.project) { IDE.project = t.projectId; showFile(); }
   $$('.term-pane').forEach(x => x.classList.toggle('on', x === t.el));
   renderAll();
   requestAnimationFrame(() => {
     fitActive();
-    if (t.term) t.term.focus();
-    else if (t.stick) { const log = t.el.querySelector('.watch-log'); log.scrollTop = log.scrollHeight; }
+    if (t.kind === 'watch') setWatchView(t, t.view);
+    else if (t.term) t.term.focus();
   });
 }
 function closeTab(id) {
   const t = tabById(id); if (!t) return;
   if (t.kind !== 'watch' && !t.exited && (t.status === 'running' || t.status === 'waiting') && !confirm(`"${t.title}" hâlâ çalışıyor. Terminal kapatılsın mı?\nClaude oturumu geçmişte kalır, sonra devam ettirebilirsin.`)) return;
-  if (t.kind === 'watch') clearInterval(t.timer);
+  if (t.kind === 'watch') { clearInterval(t.timer); if (t.mirror) api.send('mirror:stop', t.mirror); }
   else if (!t.exited) api.send('pty:kill', t.id);
   if (t.term) t.term.dispose();
   t.el.remove();
@@ -360,6 +362,7 @@ const watchTab = sid => S.tabs.find(t => t.kind === 'watch' && t.sessionId === s
 const extWaiting = () => S.live.filter(s => s.status === 'waiting');
 const pendingCount = () => S.pending.length + extWaiting().length;
 
+const liveWorked = new Set(); // outside sessions seen working since their last 'done'
 function setLive(list) {
   const prev = new Map(S.live.map(s => [s.sessionId, s.status]));
   S.live = (list || []).filter(s => !S.tabs.some(t => t.kind !== 'watch' && t.sessionId === s.sessionId));
@@ -368,8 +371,14 @@ function setLive(list) {
     if (!was) continue;
     const w = watchTab(s.sessionId);
     const where = `${shorten(s.title, 60)} · ${(projOfCwd(s.cwd) || {}).name || baseName(s.cwd)} (dışarıda)`;
-    if (was === 'busy' && s.status === 'idle') notify('done', 'İş bitti' + (addr() ? ', ' + addr() : ''), where, w && w.id);
-    if (was !== 'waiting' && s.status === 'waiting') notify('decision', 'Kararını bekliyor', `${where}: ${waitText(s.waitingFor)}`, w && w.id);
+    // a turn can pass through 'waiting' (permission asked) before it finishes
+    if (s.status === 'busy' || s.status === 'waiting') liveWorked.add(s.sessionId);
+    const target = w ? w.id : 'watch:' + s.sessionId; // a click opens the session even if no tab is open yet
+    if (!w && s.status === 'waiting' && was !== 'waiting') S.extAttn.set(s.sessionId, 'ask');
+    if (s.status === 'idle' && was !== 'idle' && liveWorked.has(s.sessionId) && !w) S.extAttn.set(s.sessionId, 'done');
+    if (s.status === 'busy') S.extAttn.delete(s.sessionId);
+    if (s.status === 'idle' && was !== 'idle' && liveWorked.delete(s.sessionId)) notify('done', 'İş bitti' + (addr() ? ', ' + addr() : ''), where, target);
+    if (was !== 'waiting' && s.status === 'waiting') notify('decision', 'Kararını bekliyor', `${where}: ${waitText(s.waitingFor)}`, target);
   }
   for (const t of S.tabs.filter(x => x.kind === 'watch')) {
     const s = S.live.find(x => x.sessionId === t.sessionId);
@@ -388,12 +397,13 @@ function openWatch(sid) {
   const p = s && projOfCwd(s.cwd);
   const el = document.createElement('div');
   el.className = 'term-pane watch-pane';
-  el.innerHTML = '<div class="watch-bar"></div><div class="watch-log"><div class="watch-note">Konuşma okunuyor…</div></div>';
+  el.innerHTML = '<div class="watch-bar"></div><div class="watch-term"><div class="watch-note">Terminale bağlanılıyor…</div></div><div class="watch-log" hidden><div class="watch-note">Konuşma okunuyor…</div></div>';
   $('#termHost').appendChild(el);
   const tab = {
     id: 'w' + (seq++), kind: 'watch', sessionId: sid, projectId: p ? p.id : null, cwd: s ? s.cwd : '',
-    el, exited: false, prompted: false, ext: s || null, offset: 0, first: true, stick: true,
+    el, exited: false, prompted: false, ext: s || null, offset: 0, first: true, stick: true, view: 'term',
     title: shorten(s ? s.title : 'Oturum', 48), status: s ? LIVE_ST[s.status] || 'idle' : 'exited',
+    mirror: null, mirrorState: 'connecting', fontSize: 13,
   };
   const log = el.querySelector('.watch-log');
   log.addEventListener('scroll', () => { tab.stick = log.scrollHeight - log.scrollTop - log.clientHeight < 60; });
@@ -402,24 +412,109 @@ function openWatch(sid) {
     e.preventDefault();
     if (/^https?:/i.test(a.getAttribute('href'))) window.open(a.getAttribute('href'));
   });
+  el.querySelector('.watch-bar').addEventListener('click', e => {
+    const b = e.target.closest('[data-wview]'); if (b) setWatchView(tab, b.dataset.wview);
+  });
   S.tabs.push(tab);
   if (tab.projectId) S.collapsed[tab.projectId] = false;
   renderWatchBar(tab);
   pollWatch(tab);
   tab.timer = setInterval(() => pollWatch(tab), 1500);
+  connectMirror(tab);
   if (S.mode === 'ide' && tab.projectId && tab.projectId !== IDE.project) switchIdeProject(tab.projectId);
   activate(tab.id);
   return tab;
+}
+/* the live terminal of the outside session, mirrored into an xterm */
+async function connectMirror(t) {
+  if (!t.ext) { t.mirrorState = 'off'; setWatchView(t, 'log'); return; }
+  try {
+    const r = await api.invoke('mirror:start', t.sessionId);
+    if (!S.tabs.includes(t)) { api.send('mirror:stop', r.id); return; }
+    t.mirror = r.id;
+  } catch (e) { mirrorFailed(t, cleanErr(e)); }
+}
+function mirrorFailed(t, msg) {
+  t.mirror = null; t.mirrorState = 'failed';
+  const box = t.el.querySelector('.watch-term');
+  if (!t.term) box.innerHTML = `<div class="watch-note">${esc(msg || 'Terminale bağlanılamadı.')}<br>Konuşma görünümüne geçildi.</div>`;
+  renderWatchBar(t);
+  if (!t.term) setWatchView(t, 'log');
+}
+function mirrorTerm(t) {
+  if (t.term) return t.term;
+  const box = t.el.querySelector('.watch-term');
+  box.innerHTML = '';
+  const term = new Terminal({
+    fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, monospace', fontSize: t.fontSize, lineHeight: 1.15,
+    cursorBlink: true, scrollback: 0, allowProposedApi: true, theme: termTheme(),
+  });
+  term.open(box);
+  term.onData(d => { if (t.mirror) api.send('mirror:input', t.mirror, d); });
+  term.attachCustomKeyEventHandler(e => {
+    if (e.type !== 'keydown') return true;
+    const k = e.key.toLowerCase();
+    if (e.ctrlKey && k === 'c' && (e.shiftKey || term.hasSelection())) {
+      if (term.hasSelection()) { navigator.clipboard.writeText(term.getSelection()).catch(() => {}); term.clearSelection(); }
+      return false;
+    }
+    if (e.ctrlKey && k === 'v') return false; // the paste event delivers the text
+    return true;
+  });
+  t.term = term;
+  new ResizeObserver(() => fitMirrorFont(t)).observe(box);
+  return term;
+}
+// keep the mirrored screen (the outside window's size) inside the pane by scaling the font
+function fitMirrorFont(t) {
+  if (!t.term || !t.el.offsetParent) return;
+  const box = t.el.querySelector('.watch-term'), scr = box.querySelector('.xterm-screen');
+  if (!scr || !scr.offsetWidth) return;
+  const ratio = Math.min((box.clientWidth - 16) / scr.offsetWidth, (box.clientHeight - 8) / scr.offsetHeight);
+  const next = Math.max(8, Math.min(13, Math.floor(t.fontSize * ratio * 2) / 2));
+  if (Math.abs(next - t.fontSize) >= 0.5 && (ratio < 1 || t.fontSize < 13)) { t.fontSize = next; t.term.options.fontSize = next; }
+}
+function onMirrorFrame(t, f) {
+  const first = t.mirrorState !== 'live';
+  const term = mirrorTerm(t);
+  if (term.cols !== f.cols || term.rows !== f.rows) { term.resize(f.cols, f.rows); requestAnimationFrame(() => fitMirrorFont(t)); }
+  term.write('\x1b[?25l\x1b[H' + f.vt + '\x1b[0m\x1b[J' + `\x1b[${f.cy + 1};${f.cx + 1}H` + (f.vis ? '\x1b[?25h' : ''));
+  if (first) {
+    t.mirrorState = 'live';
+    renderWatchBar(t);
+    if (t.view === 'term' && S.active === t.id) requestAnimationFrame(() => { fitMirrorFont(t); term.focus(); });
+  }
+}
+api.on('mirror:frame', (id, f) => { const t = S.tabs.find(x => x.mirror === id); if (t) onMirrorFrame(t, f); });
+api.on('mirror:error', (id, msg) => { const t = S.tabs.find(x => x.mirror === id); if (t) mirrorFailed(t, msg); });
+api.on('mirror:exit', id => {
+  const t = S.tabs.find(x => x.mirror === id); if (!t) return;
+  t.mirror = null;
+  t.mirrorState = t.ext ? 'failed' : 'off';
+  if (t.term) t.term.write('\x1b[0m\x1b[?25l');
+  renderWatchBar(t);
+});
+function setWatchView(t, v) {
+  t.view = v;
+  t.el.querySelector('.watch-term').hidden = v !== 'term';
+  t.el.querySelector('.watch-log').hidden = v !== 'log';
+  renderWatchBar(t);
+  requestAnimationFrame(() => {
+    if (v === 'term') { fitMirrorFont(t); if (t.term) t.term.focus(); }
+    else { const log = t.el.querySelector('.watch-log'); if (t.stick) log.scrollTop = log.scrollHeight; }
+  });
 }
 function renderWatchBar(t) {
   const bar = t.el.querySelector('.watch-bar'); if (!bar) return;
   const s = t.ext;
   const st = s ? (s.status === 'waiting' ? waitText(s.waitingFor) : s.status === 'busy' ? 'Çalışıyor' : 'Hazır') : '';
+  const conn = !s ? 'kapandı' : t.mirrorState === 'live' ? 'terminale bağlı, yazdıkların o pencereye gider' : t.mirrorState === 'connecting' ? 'terminale bağlanılıyor…' : 'terminale bağlanılamadı, sadece konuşma görünüyor';
   bar.innerHTML = `<span class="dot ${t.status}"></span>`
     + `<span class="wb-t"><b>${s ? 'Claudelot dışında açık' : 'Dışarıdaki oturum kapandı'}</b>${st ? ' · ' + esc(st) : ''}`
-    + `<small>${esc(s ? s.cwd : t.cwd)}${s ? ' · PID ' + s.pid : ''} · sadece izleniyor</small></span>`
+    + `<small>${esc(s ? s.cwd : t.cwd)}${s ? ' · PID ' + s.pid : ''} · ${conn}</small></span>`
+    + `<span class="seg wb-seg"><button class="${t.view === 'term' ? 'on' : ''}" data-wview="term" ${t.term || t.mirrorState === 'connecting' ? '' : 'disabled'}><i class="fa-solid fa-terminal"></i> Terminal</button><button class="${t.view === 'log' ? 'on' : ''}" data-wview="log"><i class="fa-regular fa-comments"></i> Konuşma</button></span>`
     + (s
-      ? `<button class="btn primary" data-takeover="${t.sessionId}" title="Dışarıdaki claude sürecini kapatır, konuşmaya burada kaldığı yerden devam eder"><i class="fa-solid fa-right-to-bracket"></i> Claudelot'a al</button>`
+      ? `<button class="btn" data-takeover="${t.sessionId}" title="Dışarıdaki claude sürecini kapatır, konuşmaya bir Claudelot terminalinde kaldığı yerden devam eder"><i class="fa-solid fa-right-to-bracket"></i> Claudelot'a taşı</button>`
       : `<button class="btn primary" data-continue="${t.sessionId}" title="Konuşmaya bir Claudelot terminalinde kaldığı yerden devam eder"><i class="fa-solid fa-play"></i> Claudelot'ta devam et</button>`);
 }
 function watchEntryHTML(e) {
@@ -491,7 +586,7 @@ function renderSide() {
     const liveIds = new Set([...live.map(t => t.sessionId), ...ext.map(s => s.sessionId)].filter(Boolean));
     const hist = (S.history[p.id] || []).filter(h => !liveIds.has(h.id));
     const limit = S.showAll[p.id] ? 40 : 5;
-    const items = live.map(t => `<li><button class="sess live ${t.id === S.active ? 'active' : ''}" data-tab="${t.id}" title="${esc(t.title)} · ${STATUS_TEXT[t.status]}">${tabIcon(t)}<span class="sess-t">${esc(t.title)}</span><span class="sess-time">${STATUS_SHORT[t.status]}</span></button></li>`).join('')
+    const items = live.map(t => `<li><button class="sess live ${t.id === S.active ? 'active' : ''}${attnCls(t.attn)}" data-tab="${t.id}" title="${esc(t.title)} · ${STATUS_TEXT[t.status]}">${tabIcon(t)}<span class="sess-t">${esc(t.title)}</span><span class="sess-time">${STATUS_SHORT[t.status]}</span></button></li>`).join('')
       + ext.map(s => extRow(s)).join('')
       + hist.slice(0, limit).map(h => `<li><button class="sess" data-resume="${h.id}" data-pid="${p.id}" title="${esc(h.title)}&#10;Kaldığı yerden devam ettirmek için tıkla"><span class="dot idle"></span><span class="sess-t">${esc(h.title)}</span><span class="sess-time">${rel(h.mtime)}</span></button></li>`).join('')
       + (hist.length > limit ? `<li><button class="sess-more" data-more="${p.id}">+ ${hist.length - limit} oturum daha</button></li>` : '')
@@ -515,14 +610,15 @@ function renderSide() {
 function extRow(s, showDir) {
   const w = watchTab(s.sessionId), st = LIVE_ST[s.status] || 'idle';
   const tip = `${s.title}\n${s.cwd}\nClaudelot dışında açık (PID ${s.pid}) · ${s.status === 'waiting' ? waitText(s.waitingFor) : STATUS_TEXT[st]}\nİzlemek için tıkla`;
-  return `<li><button class="sess live ext ${w && w.id === S.active ? 'active' : ''}" data-watch="${s.sessionId}" title="${esc(tip)}"><span class="dot ${st}"></span><span class="sess-t">${showDir ? `<span class="sess-dir">${esc(baseName(s.cwd))}</span> ` : ''}${esc(s.title)}</span><span class="sess-time ext-tag">dışarıda</span></button></li>`;
+  const at = w ? w.attn : S.extAttn.get(s.sessionId);
+  return `<li><button class="sess live ext ${w && w.id === S.active ? 'active' : ''}${attnCls(at)}" data-watch="${s.sessionId}" title="${esc(tip)}"><span class="dot ${st}"></span><span class="sess-t">${showDir ? `<span class="sess-dir">${esc(baseName(s.cwd))}</span> ` : ''}${esc(s.title)}</span><span class="sess-time ext-tag">dışarıda</span></button></li>`;
 }
 function renderTabs() {
-  const tabHTML = t => `<div class="tab ${t.id === S.active ? 'active' : ''}" role="tab"><button data-tab="${t.id}" title="${esc((proj(t.projectId) || {}).name)} · ${esc(t.title)} · ${STATUS_TEXT[t.status]}"><span class="tab-p">${esc((proj(t.projectId) || {}).name || '')}</span>${tabIcon(t)}<span class="tab-t">${esc(t.title)}</span></button><button class="tab-x" data-close="${t.id}" aria-label="Terminali kapat" title="Kapat">×</button></div>`;
+  const tabHTML = t => `<div class="tab ${t.id === S.active ? 'active' : ''}${attnCls(t.attn)}" role="tab"><button data-tab="${t.id}" title="${esc((proj(t.projectId) || {}).name)} · ${esc(t.title)} · ${STATUS_TEXT[t.status]}"><span class="tab-p">${esc((proj(t.projectId) || {}).name || '')}</span>${tabIcon(t)}<span class="tab-t">${esc(t.title)}</span></button><button class="tab-x" data-close="${t.id}" aria-label="Terminali kapat" title="Kapat">×</button></div>`;
   $('#tabs').innerHTML = S.tabs.length ? S.tabs.map(tabHTML).join('') : '<span class="tabs-empty">Açık terminal yok</span>';
   // IDE bottom panel: only the selected project's terminals
   const pt = S.tabs.filter(t => t.projectId === IDE.project);
-  $('#ptabs').innerHTML = pt.map(t => `<button class="ptab ${t.id === S.active ? 'on' : ''}" data-tab="${t.id}" title="${esc(t.title)}">${tabIcon(t)}${esc(t.title)}</button>`).join('')
+  $('#ptabs').innerHTML = pt.map(t => `<button class="ptab ${t.id === S.active ? 'on' : ''}${attnCls(t.attn)}" data-tab="${t.id}" title="${esc(t.title)}">${tabIcon(t)}${esc(t.title)}</button>`).join('')
     + (IDE.project ? `<button class="ptab new" data-new="${IDE.project}"><i class="fa-solid fa-plus"></i> Oturum</button><button class="ptab new caret" data-newmenu="${IDE.project}" title="Terminal ya da PowerShell aç" aria-label="Diğer terminal türleri"><i class="fa-solid fa-caret-down"></i></button>` : '');
   // empty state over the terminal area
   let empty = $('#termEmpty');
@@ -588,8 +684,21 @@ function renderStatus() {
 function renderPop() {
   $('#nlist').innerHTML = S.notifs.length ? S.notifs.map(n => `<button class="nitem" ${n.tabId ? `data-tab="${n.tabId}"` : ''}><span class="ic ${n.type}">${ICONS[n.type] || 'i'}</span><span class="tx"><b>${esc(n.title)}</b><span>${esc(n.body)}</span></span><span class="tm">${new Date(n.t).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span></button>`).join('') : '<div class="n-empty">Henüz bildirim yok.</div>';
 }
+/* A tab that finished or asks something blinks until it is looked at. */
+const attnCls = a => (a ? ` attn attn-${a}` : '');
+function trackAttention() {
+  const looking = document.hasFocus();
+  for (const t of S.tabs) {
+    if (t.lastSt === t.status) continue;
+    const finished = t.status === 'done' || (t.kind === 'watch' && t.status === 'idle' && (t.lastSt === 'running' || t.lastSt === 'waiting'));
+    if (t.lastSt && (finished || t.status === 'waiting') && !(looking && t.id === S.active)) t.attn = t.status === 'waiting' ? 'ask' : 'done';
+    else if (t.status === 'running') t.attn = null;
+    t.lastSt = t.status;
+  }
+}
 function renderAll() {
-  renderSide(); renderTabs(); renderQueue(); renderStatus();
+  trackAttention();
+  renderSide(); renderTabs(); renderQueue(); renderStatus(); renderPanelBadges();
   if (S.mode === 'ide') renderIde();
   if (!$('#pop').hidden) renderPop();
 }
@@ -1228,8 +1337,9 @@ function bindEvents() {
     e.preventDefault(); e.stopPropagation();
     sc.run();
   }, true);
-  api.on('focus-tab', id => { const t = tabById(id); if (!t) return; if (S.mode === 'ide' && t.projectId !== IDE.project) switchIdeProject(t.projectId); activate(id); });
+  api.on('focus-tab', id => { if (String(id).startsWith('watch:')) { const sid = id.slice(6); const w = watchTab(sid); if (w) id = w.id; else { if (isExtLive(sid)) openWatch(sid); return; } } const t = tabById(id); if (!t) return; if (S.mode === 'ide' && t.projectId !== IDE.project) switchIdeProject(t.projectId); activate(id); });
   api.on('open-settings', () => openSettings());
+  window.addEventListener('focus', () => { const t = tabById(S.active); if (t && t.attn) { t.attn = null; renderAll(); } });
   // the welcome window picked a project; take it (only once) and act on it
   api.on('open-project', async () => handleOpen(await api.invoke('app:takePendingOpen')));
   api.on('projects-changed', async list => { S.projects = list; CFG.projects = list; await refreshAllHistory(); renderAll(); });
@@ -1348,13 +1458,27 @@ function renderStartList() {
 }
 
 /* ---------------- panels ---------------- */
-const panelUi = () => Object.assign({ side: true, queue: true, usage: true }, CFG.settings.ui || {});
+const panelUi = () => Object.assign({ side: true, queue: true, usage: true, agents: true }, CFG.settings.ui || {});
+/* Each column holds two sections that hide on their own; a hidden section leaves a
+   one-line bar in its place, and a column with both hidden becomes a thin rail. */
 function applyPanels() {
   const ui = panelUi();
-  $('#sidePanel').hidden = !ui.side; $('#sideRail').hidden = ui.side;
-  $('#queuePanel').hidden = !ui.queue; $('#queueRail').hidden = ui.queue;
-  $('#usage').hidden = !ui.usage;
+  $('#sidePanel').hidden = !ui.side; $('#sideBar').hidden = ui.side;
+  $('#usage').hidden = !ui.usage; $('#usageBar').hidden = ui.usage;
+  $('#leftCol').hidden = !ui.side && !ui.usage; $('#leftRail').hidden = ui.side || ui.usage;
+  $('#queuePanel').hidden = !ui.queue; $('#queueBar').hidden = ui.queue;
+  $('#agentsPanel').hidden = !ui.agents; $('#agentsBar').hidden = ui.agents;
+  $('#rightCol').hidden = !ui.queue && !ui.agents; $('#rightRail').hidden = ui.queue || ui.agents;
+  renderPanelBadges();
   requestAnimationFrame(fitActive);
+}
+function renderPanelBadges() {
+  const u = S.usage, n = pendingCount(), a = S.agents.length;
+  $('#usageBarV').textContent = u ? fmtTok(u.total) + ' token' : '';
+  $('#queueBarV').textContent = n || '';
+  $('#agentsBarV').textContent = a || '';
+  $('#railCount').hidden = !n; $('#railCount').textContent = n;
+  $('#railAgents').hidden = !a; $('#railAgents').textContent = a;
 }
 function togglePanel(name) {
   if (S.mode === 'ide' && (name === 'side' || name === 'queue')) { toolbar(name === 'side' ? 'ex' : 'panel'); return; }
@@ -1389,6 +1513,7 @@ const SHORTCUTS = [
   { group: 'Paneller', keys: 'Ctrl+Shift+E', label: 'Projeler paneli (IDE: dosya gezgini)', run: () => togglePanel('side') },
   { group: 'Paneller', keys: 'Ctrl+Shift+D', label: 'Karar paneli (IDE: Claude paneli)', run: () => togglePanel('queue') },
   { group: 'Paneller', keys: 'Ctrl+Shift+U', label: 'Haftalık kullanım paneli', run: () => togglePanel('usage') },
+  { group: 'Paneller', keys: 'Ctrl+Shift+J', label: 'Aktif ajanlar bölümü', run: () => togglePanel('agents') },
   { group: 'Terminaller', keys: 'Ctrl+Shift+N', label: 'Yeni Claude oturumu (seçili proje)', run: () => { const p = projectHere(); if (p) openTerminal({ kind: 'claude', projectId: p }); } },
   { group: 'Terminaller', keys: 'Ctrl+Shift+T', label: 'Yeni PowerShell (seçili proje)', run: () => { const p = projectHere(); if (p) openTerminal({ kind: 'shell', shell: 'pwsh', projectId: p }); } },
   { group: 'Terminaller', keys: 'Ctrl+Shift+W', label: 'Açık terminali kapat', run: () => { if (S.active) closeTab(S.active); } },
