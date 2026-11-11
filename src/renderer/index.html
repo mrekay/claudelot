@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data:">
+<title>Claudelot</title>
+<link rel="stylesheet" href="../../node_modules/@fortawesome/fontawesome-free/css/all.min.css">
+<link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css">
+<link rel="stylesheet" href="../../node_modules/codemirror/lib/codemirror.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="window" id="win">
+  <header class="titlebar">
+    <div class="brand"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="2" width="16" height="4" rx="1.5" fill="var(--accent)"/><rect x="1" y="7.5" width="12" height="4" rx="1.5" fill="var(--accent)" opacity=".7"/><rect x="1" y="13" width="8" height="4" rx="1.5" fill="var(--warn)"/></svg>Claudelot</div>
+    <div class="mode-pill" role="tablist" aria-label="Mod">
+      <button role="tab" data-mode="claude" class="on" title="Claude modu (Ctrl+1)"><i class="fa-solid fa-terminal"></i>Claude<span class="pill-b" id="pillBadge" hidden>0</span></button>
+      <button role="tab" data-mode="ide" title="IDE modu (Ctrl+2)"><i class="fa-solid fa-code"></i>IDE</button>
+    </div>
+    <div class="tb-right">
+      <button class="tb-btn" id="setBtn" title="Ayarlar (Ctrl+,)" aria-label="Ayarlar"><i class="fa-solid fa-gear"></i></button>
+      <button class="tb-btn" id="skinBtn" title="Tema" aria-label="Tema"><i class="fa-solid fa-palette"></i></button>
+      <button class="tb-btn" id="bellBtn" title="Bildirimler" aria-label="Bildirimler"><i class="fa-regular fa-bell"></i><span class="badge" id="bellBadge" hidden>0</span></button>
+      <div class="win-ctl">
+        <button class="tb-btn" id="minBtn" title="Simge durumuna küçült" aria-label="Küçült"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M1 6h10" stroke="currentColor" stroke-width="1.2"/></svg></button>
+        <button class="tb-btn" id="maxBtn" title="Ekranı kapla" aria-label="Ekranı kapla"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><rect x="1.5" y="1.5" width="9" height="9" stroke="currentColor" stroke-width="1.2"/></svg></button>
+        <button class="tb-btn close" id="closeBtn" title="Kapat (tepsiye küçültür)" aria-label="Kapat"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M1.5 1.5l9 9M10.5 1.5l-9 9" stroke="currentColor" stroke-width="1.2"/></svg></button>
+      </div>
+    </div>
+  </header>
+
+  <!-- CLAUDE MODE -->
+  <div class="app" id="claudeView">
+    <aside class="side" id="sidePanel" aria-label="Projeler">
+      <div class="panel-h">Projeler <span class="ph-acts"><button class="start-btn" id="startBtn" title="Bir projede oturum başlat (Ctrl+Shift+P)" aria-haspopup="true" aria-expanded="false"><i class="fa-solid fa-play"></i> Proje Başlat <i class="fa-solid fa-chevron-down sb-car"></i></button><button class="ghost icon" data-panel="side" title="Paneli gizle (Ctrl+Shift+E)" aria-label="Projeler panelini gizle"><i class="fa-solid fa-angles-left"></i></button></span></div>
+      <div class="start-panel" id="startPanel" hidden>
+        <div class="sp-search"><i class="fa-solid fa-magnifying-glass"></i><input id="startQ" placeholder="Proje ara…" autocomplete="off" spellcheck="false" aria-label="Proje ara"></div>
+        <div class="sp-list" id="startList" role="listbox" aria-label="Projeler"></div>
+        <button class="sp-add" id="addProjBtn"><i class="fa-solid fa-folder-plus"></i> Proje ekle</button>
+      </div>
+      <div class="side-scroll" id="side"></div>
+      <div class="usage" id="usage"></div>
+    </aside>
+    <button class="rail rail-left" id="sideRail" data-panel="side" hidden title="Projeleri göster (Ctrl+Shift+E)"><i class="fa-solid fa-folder-tree"></i><span>Projeler</span></button>
+    <main class="center">
+      <div class="tabs" id="tabs" role="tablist"></div>
+      <div class="term-slot" id="centerSlot"></div>
+    </main>
+    <button class="rail rail-right" id="queueRail" data-panel="queue" hidden title="Kararları göster (Ctrl+Shift+D)"><i class="fa-solid fa-hand"></i><span>Kararlar</span><b class="rail-n" id="railCount" hidden></b></button>
+    <aside class="queue" id="queuePanel" aria-label="Kararını bekleyenler">
+      <div class="panel-h">Kararını bekleyenler <span class="ph-acts"><span class="count" id="qCount">0</span><button class="ghost icon" data-panel="queue" title="Paneli gizle (Ctrl+Shift+D)" aria-label="Karar panelini gizle"><i class="fa-solid fa-angles-right"></i></button></span></div>
+      <div class="queue-scroll" id="queue"></div>
+      <div class="agents">
+        <div class="panel-h">Aktif ajanlar ve workflow'lar</div>
+        <div id="agents"></div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- IDE MODE -->
+  <div class="ide" id="ideView" hidden>
+    <div class="itool" id="itool" role="toolbar" aria-label="IDE araç çubuğu">
+      <div class="tg">
+        <button class="tb" data-tb="new" title="Yeni dosya"><i class="fa-solid fa-file-circle-plus"></i><span>Yeni</span></button>
+        <button class="tb" data-tb="save" id="tbSave" title="Kaydet (Ctrl+S)"><i class="fa-solid fa-floppy-disk"></i><span>Kaydet</span></button>
+        <button class="tb" data-tb="saveall" id="tbSaveAll" title="Bu projedeki tüm dosyaları kaydet"><i class="fa-solid fa-copy"></i><span>Tümünü kaydet</span></button>
+      </div>
+      <form class="newfile" id="newFileForm" hidden><input id="newFileIn" placeholder="src/yeni-dosya.ts" aria-label="Yeni dosya yolu"><button class="btn primary">Oluştur</button></form>
+      <div class="tg">
+        <button class="tb" data-tb="undo" title="Geri al (Ctrl+Z)" aria-label="Geri al"><i class="fa-solid fa-rotate-left"></i></button>
+        <button class="tb" data-tb="redo" title="Yinele (Ctrl+Y)" aria-label="Yinele"><i class="fa-solid fa-rotate-right"></i></button>
+      </div>
+      <div class="tg find"><i class="fa-solid fa-magnifying-glass"></i><input id="findIn" placeholder="Dosyada ara (Enter)" aria-label="Dosyada ara"><span id="findN"></span></div>
+      <div class="tg">
+        <button class="tb" data-tb="smaller" title="Yazıyı küçült" aria-label="Yazıyı küçült">A−</button><span class="tb-size" id="tbSize"></span><button class="tb" data-tb="bigger" title="Yazıyı büyüt" aria-label="Yazıyı büyüt">A+</button>
+      </div>
+      <div class="tg" style="margin-left:auto">
+        <button class="tb" data-tb="ex" id="tbEx" title="Dosya gezginini göster / gizle (Ctrl+Shift+E)"><i class="fa-solid fa-table-columns"></i><span>Gezgin</span></button>
+        <button class="tb" data-tb="panel" id="tbPanel" title="Claude panelini göster / gizle (Ctrl+Shift+D)"><i class="fa-solid fa-terminal"></i><span>Claude paneli</span></button>
+        <button class="tb accent" data-tb="ask" title="Açık dosyayı ya da seçili satırları Claude'a sor"><i class="fa-solid fa-comment-dots"></i><span>Claude'a sor</span></button>
+      </div>
+    </div>
+    <aside class="explorer" aria-label="Dosya gezgini">
+      <div class="panel-h">Projeler</div>
+      <div class="ex-proj" id="exProj"><select id="ideProjSel" aria-label="Proje"></select><div class="ex-path" id="ideProjPath"></div></div>
+      <div class="panel-h ex-files-h">Dosyalar <button class="ghost icon" id="refreshTree" title="Yenile" aria-label="Dosya listesini yenile"><i class="fa-solid fa-arrows-rotate"></i></button></div>
+      <div class="tree" id="tree"></div>
+    </aside>
+    <main class="editor">
+      <div class="etabs" id="etabs"></div>
+      <div class="crumb" id="crumb"></div>
+      <div class="code" id="code"><div class="empty-note" id="codeEmpty">Soldaki dosyalardan birini aç.</div><article class="md-view" id="mdView" hidden></article></div>
+      <section class="bpanel" id="bpanel">
+        <div class="ptabs" id="ptabs"></div>
+        <div class="term-slot" id="ideSlot"></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="statusbar" id="statusbar"></div>
+
+  <div class="term-host" id="termHost"></div>
+
+  <!-- popovers -->
+  <div class="skin-menu" id="skinMenu" role="menu" hidden></div>
+  <div class="new-menu" id="newMenu" role="menu" hidden></div>
+  <div class="popover" id="pop" hidden>
+    <div class="pop-h">Bildirimler <span><button class="ghost" id="notifSettings">Ayarlar</button><button class="ghost" id="clearN">Temizle</button></span></div>
+    <div class="nlist" id="nlist"></div>
+  </div>
+  <div class="settings-bg" id="settings" hidden>
+    <div class="settings" role="dialog" aria-modal="true" aria-labelledby="setTitle">
+      <div class="set-h"><span id="setTitle">Ayarlar</span><button class="ghost" id="setClose">Kapat <i class="fa-solid fa-xmark"></i></button></div>
+      <nav class="set-nav" id="setNav"></nav>
+      <div class="set-body" id="setBody"></div>
+    </div>
+  </div>
+  <div class="settings-bg" id="report" hidden>
+    <div class="settings report" role="dialog" aria-modal="true" aria-labelledby="repTitle">
+      <div class="set-h"><span id="repTitle">Kullanım raporu</span><button class="ghost" id="repClose">Kapat <i class="fa-solid fa-xmark"></i></button></div>
+      <div class="set-body rep-body" id="repBody"></div>
+    </div>
+  </div>
+  <div class="discover-bg" id="discover" hidden>
+    <div class="settings discover" role="dialog" aria-modal="true" aria-labelledby="discTitle">
+      <div class="set-h"><span id="discTitle">Proje ekle</span><button class="ghost" id="discClose">Kapat <i class="fa-solid fa-xmark"></i></button></div>
+      <div class="set-body" id="discBody"></div>
+    </div>
+  </div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</div>
+
+<script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+<script src="../../node_modules/codemirror/lib/codemirror.js"></script>
+<script src="../../node_modules/codemirror/addon/mode/simple.js"></script>
+<script src="../../node_modules/codemirror/addon/mode/overlay.js"></script>
+<script src="../../node_modules/codemirror/addon/search/searchcursor.js"></script>
+<script src="../../node_modules/codemirror/addon/edit/matchbrackets.js"></script>
+<script src="../../node_modules/codemirror/addon/edit/closebrackets.js"></script>
+<script src="../../node_modules/codemirror/addon/selection/active-line.js"></script>
+<script src="../../node_modules/codemirror/mode/javascript/javascript.js"></script>
+<script src="../../node_modules/codemirror/mode/xml/xml.js"></script>
+<script src="../../node_modules/codemirror/mode/jsx/jsx.js"></script>
+<script src="../../node_modules/codemirror/mode/css/css.js"></script>
+<script src="../../node_modules/codemirror/mode/htmlmixed/htmlmixed.js"></script>
+<script src="../../node_modules/codemirror/mode/markdown/markdown.js"></script>
+<script src="../../node_modules/codemirror/mode/python/python.js"></script>
+<script src="../../node_modules/codemirror/mode/clike/clike.js"></script>
+<script src="../../node_modules/codemirror/mode/go/go.js"></script>
+<script src="../../node_modules/codemirror/mode/rust/rust.js"></script>
+<script src="../../node_modules/codemirror/mode/shell/shell.js"></script>
+<script src="../../node_modules/codemirror/mode/powershell/powershell.js"></script>
+<script src="../../node_modules/codemirror/mode/yaml/yaml.js"></script>
+<script src="../../node_modules/codemirror/mode/sql/sql.js"></script>
+<script src="../../node_modules/codemirror/mode/toml/toml.js"></script>
+<script src="../../node_modules/codemirror/mode/dockerfile/dockerfile.js"></script>
+<script src="../../node_modules/marked/lib/marked.umd.js"></script>
+<script src="../../node_modules/dompurify/dist/purify.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

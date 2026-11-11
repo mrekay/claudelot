@@ -1,0 +1,75 @@
+{
+  "name": "claudelot",
+  "version": "0.1.0",
+  "description": "Claude Code oturumlarını tek pencereden yöneten Windows masaüstü uygulaması",
+  "author": "mrekay",
+  "homepage": "https://github.com/mrekay/claudelot",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mrekay/claudelot.git"
+  },
+  "main": "src/main/main.js",
+  "private": true,
+  "productName": "Claudelot",
+  "scripts": {
+    "start": "electron .",
+    "dist": "node scripts/make-icon.js && electron-builder --win"
+  },
+  "dependencies": {
+    "@fortawesome/fontawesome-free": "^7.3.1",
+    "@lydell/node-pty": "^1.2.0-beta.18",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "codemirror": "^5.65.21",
+    "dompurify": "^3.4.17",
+    "marked": "^18.2.0"
+  },
+  "devDependencies": {
+    "electron": "^45.3.0",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.claudelot.app",
+    "productName": "Claudelot",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/@lydell/**"
+    ],
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Claudelot",
+      "artifactName": "Claudelot-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Claudelot-Portable-${version}.${ext}"
+    }
+  }
+}

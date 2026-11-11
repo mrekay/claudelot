@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+<title>Claudelot</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="welcome.css">
+</head>
+<body>
+<div class="wl">
+  <aside class="wl-side">
+    <div class="wl-brand">
+      <svg width="34" height="34" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="2" width="16" height="4" rx="1.5" fill="var(--accent)"/><rect x="1" y="7.5" width="12" height="4" rx="1.5" fill="var(--accent)" opacity=".7"/><rect x="1" y="13" width="8" height="4" rx="1.5" fill="var(--warn)"/></svg>
+      <div><b>Claudelot</b><small>Claude oturum yöneticisi</small></div>
+    </div>
+    <nav class="wl-nav">
+      <button class="wl-act" id="addFolder"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.5 4h4.5l1.5 1.5h7v8h-13z"/><path d="M8 8v3.5M6.25 9.75h3.5"/></svg>Klasör aç…</button>
+      <button class="wl-act" id="restoreAll" title="Uygulama son kapandığında açık olan terminalleri yeniden açar"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.5 2.5v3h3"/><path d="M8 5v3l2 1.5"/></svg><span>Son oturumları geri yükle</span><span class="wl-n" id="restoreN"></span></button>
+      <button class="wl-act" id="openMain"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M1.5 5.5h13M5 5.5v8"/></svg>Ana pencereye geç</button>
+    </nav>
+    <div class="wl-foot">
+      <div id="wlStats"></div>
+      <div class="wl-hint"><kbd>↑</kbd><kbd>↓</kbd> seç · <kbd>Enter</kbd> aç · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> yeni oturum</div>
+    </div>
+  </aside>
+  <main class="wl-main">
+    <div class="wl-top">
+      <div class="wl-drag"></div>
+      <button class="tb-btn" id="wlMin" aria-label="Küçült" title="Küçült"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M1 6h10" stroke="currentColor" stroke-width="1.2"/></svg></button>
+      <button class="tb-btn close" id="wlClose" aria-label="Kapat" title="Kapat (uygulama tepside çalışmaya devam eder)"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M1.5 1.5l9 9M10.5 1.5l-9 9" stroke="currentColor" stroke-width="1.2"/></svg></button>
+    </div>
+    <header class="wl-head">
+      <div class="wl-date" id="wlDate"></div>
+      <h1 id="wlGreet">Bugün ne yapıyoruz?</h1>
+      <p id="wlSub"></p>
+    </header>
+    <div class="wl-search">
+      <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="6" cy="6" r="4"/><path d="M9 9l3.5 3.5"/></svg>
+      <input id="wlQ" placeholder="Proje ara…" autocomplete="off" spellcheck="false" aria-label="Proje ara">
+      <span id="wlCount"></span>
+    </div>
+    <div class="wl-list" id="wlList" role="listbox" aria-label="Projeler"></div>
+  </main>
+</div>
+<script src="welcome.js"></script>
+</body>
+</html>
