@@ -88,6 +88,30 @@ function toast(title, body) {
 }
 
 /* ---------------- notifications ---------------- */
+/* Claudelot's own chimes, made with Web Audio so no sound files are needed:
+   done = two rising notes, decision = a brighter four-note call, others = one soft note */
+let audioCtx = null;
+const CHIMES = {
+  done: [[659.25, 0], [987.77, 0.13]],
+  decision: [[880, 0], [1174.66, 0.11], [880, 0.22], [1174.66, 0.33]],
+  other: [[783.99, 0]],
+};
+function playChime(type) {
+  try {
+    audioCtx = audioCtx || new AudioContext();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const t0 = audioCtx.currentTime + 0.03;
+    for (const [freq, at] of CHIMES[type] || CHIMES.other) {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = 'sine'; o.frequency.value = freq;
+      g.gain.setValueAtTime(0, t0 + at);
+      g.gain.linearRampToValueAtTime(0.2, t0 + at + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + at + 0.5);
+      o.connect(g).connect(audioCtx.destination);
+      o.start(t0 + at); o.stop(t0 + at + 0.55);
+    }
+  } catch (_) {}
+}
 function notify(type, title, body, tabId) {
   S.notifs.unshift({ type, title, body, tabId, t: Date.now() });
   S.notifs = S.notifs.slice(0, 80);
@@ -95,6 +119,7 @@ function notify(type, title, body, tabId) {
   const n = CFG.settings.notif;
   if (n.quiet || !n[type]) return;
   if (document.hasFocus() && S.active === tabId) return; // already looking at it
+  if (CFG.settings.sound && (CFG.settings.soundStyle || 'claudelot') === 'claudelot') playChime(type);
   api.send('notify', { title, body, tabId });
 }
 
@@ -1162,7 +1187,8 @@ function renderSettings() {
       + `<h4>Terminal yazı renkleri</h4><div class="seg"><button class="${tc === 'windows' ? 'on' : ''}" data-termcolors="windows">Windows Terminal</button><button class="${tc === 'theme' ? 'on' : ''}" data-termcolors="theme">Temaya uyumlu</button></div><p class="set-note">Windows Terminal: Claude Code normal Windows terminalindeki renklerle görünür (beyaz yazı, mavi bağlantılar).</p>`;
   } else if (setTab === 'bildirim') {
     h = '<h4>Hangi durumlarda Windows bildirimi gelsin?</h4>' + Object.keys(NOTIF_LABELS).map(k => `<div class="set-row"><span>${NOTIF_LABELS[k]}</span>${sw(`data-notif="${k}"`, st.notif[k], NOTIF_LABELS[k])}</div>`).join('')
-      + `<div class="set-row"><span>Bildirim sesi</span>${sw('data-set="sound"', st.sound, 'Bildirim sesi')}</div>`
+      + (() => { const cur = !st.sound ? 'off' : (st.soundStyle || 'claudelot'); return `<h4>Bildirim sesi</h4><div class="seg">${[['claudelot', 'Claudelot sesi'], ['windows', 'Windows sesi'], ['off', 'Sessiz']].map(([k, l]) => `<button class="${cur === k ? 'on' : ''}" data-soundstyle="${k}">${l}</button>`).join('')}</div>`
+        + (cur === 'claudelot' ? `<div class="chips" style="margin-top:8px"><button class="chip-btn" data-chime="done"><i class="fa-solid fa-play"></i> İş bitti</button><button class="chip-btn" data-chime="decision"><i class="fa-solid fa-play"></i> Karar bekliyor</button><button class="chip-btn" data-chime="subagent"><i class="fa-solid fa-play"></i> Ajan / workflow</button></div>` : ''); })()
       + '<p class="set-note">O an baktığın terminal için bildirim gösterilmez.</p>';
   } else if (setTab === 'pencere') {
     h = '<h4>Pencere</h4>'
@@ -1241,6 +1267,8 @@ function bindEvents() {
     else if (d.hitap !== undefined) { await setCfg({ settings: { name: d.hitap } }); renderSettings(); }
     else if (d.tone) { await setCfg({ settings: { tone: d.tone } }); renderSettings(); }
     else if (d.termcolors) { await setCfg({ settings: { termColors: d.termcolors } }); applySkin(CFG.settings.skin); renderSettings(); }
+    else if (d.soundstyle) { await setCfg({ settings: d.soundstyle === 'off' ? { sound: false } : { sound: true, soundStyle: d.soundstyle } }); renderSettings(); if (d.soundstyle === 'claudelot') playChime('done'); }
+    else if (d.chime) playChime(d.chime);
     else if (d.set) { await setCfg({ settings: { [d.set]: !CFG.settings[d.set] } }); renderSettings(); }
     else if (d.notif) { await setCfg({ settings: { notif: { [d.notif]: !CFG.settings.notif[d.notif] } } }); renderSettings(); }
     else if (d.addpath) { const p = await api.invoke('project:addPath', d.addpath); await projectAdded(p); el.closest('.disc-row').remove(); }

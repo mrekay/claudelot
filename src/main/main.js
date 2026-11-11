@@ -17,6 +17,8 @@ if (!app.requestSingleInstanceLock()) {
   return;
 }
 app.setAppUserModelId('Claudelot');
+// notification chimes play from the (often hidden) window without a click first
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 const DATA = app.getPath('userData');
 const CONFIG_FILE = path.join(DATA, 'config.json');
@@ -40,6 +42,7 @@ const DEFAULTS = {
   settings: {
     name: '', tone: 'samimi', // name: filled from git / GitHub on first launch, else no form of address lang: 'tr', extra: '',
     closeToTray: true, autostart: false, sound: true, welcome: true,
+    soundStyle: 'claudelot', // 'claudelot': the app plays its own chime · 'windows': the system notification sound
     // defaults for every Claude session Claudelot starts ('' = leave it to Claude Code)
     claude: { model: '', effort: '', permissionMode: '', remoteControl: false },
     notif: { done: true, decision: true, subagent: true, workflow: true, quiet: false },
@@ -897,7 +900,7 @@ function registerIpc() {
 
   ipcMain.on('notify', (_e, n) => {
     if (!Notification.isSupported()) return;
-    const note = new Notification({ title: n.title, body: n.body || '', silent: !config.settings.sound, icon: appIcon(64, 1) });
+    const note = new Notification({ title: n.title, body: n.body || '', silent: !config.settings.sound || config.settings.soundStyle !== 'windows', icon: appIcon(64, 1) });
     liveNotifications.add(note);
     note.on('click', () => { showWindow(); if (n.tabId) send('focus-tab', n.tabId); });
     // blink the taskbar button until the window is looked at
