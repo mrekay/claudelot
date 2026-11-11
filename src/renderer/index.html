@@ -117,7 +117,8 @@
   </div>
   <div class="settings-bg" id="report" hidden>
     <div class="settings report" role="dialog" aria-modal="true" aria-labelledby="repTitle">
-      <div class="set-h"><span id="repTitle">Kullanım raporu</span><button class="ghost" id="repClose">Kapat <i class="fa-solid fa-xmark"></i></button></div>
+      <div class="set-h"><span id="repTitle">Kullanım raporu <button class="ghost icon rep-info" id="repInfoBtn" title="Bu rakamlar ne anlama geliyor?" aria-label="Bilgi" aria-expanded="false"><i class="fa-solid fa-circle-info"></i></button></span><button class="ghost" id="repClose">Kapat <i class="fa-solid fa-xmark"></i></button></div>
+      <div class="rep-info-note" id="repInfo" hidden>Dolar tutarları, harcanan tokenların API liste fiyatıyla karşılığıdır; abonelikte ayrıca ödenmez. Token sayısına girdi, çıktı ve önbelleğe yazılan tokenlar dahildir, önbellekten okunanlar dahil değildir. Limit doluluğunu görmek için Claude'da <b>/usage</b> yaz.</div>
       <div class="set-body rep-body" id="repBody"></div>
     </div>
   </div>

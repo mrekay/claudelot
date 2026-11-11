@@ -176,7 +176,9 @@ $('#addFolder').onclick = async () => {
   if (p) await load();
 };
 $('#openMain').onclick = () => api.send('welcome:open', null);
+$('#openSettings').onclick = () => api.send('welcome:open', { action: 'settings' });
 $('#restoreAll').onclick = () => api.send('welcome:open', { action: 'restoreAll' });
 $('#wlClose').onclick = () => api.send('welcome:close');
 $('#wlMin').onclick = () => api.send('welcome:min');
+document.addEventListener('dragstart', e => e.preventDefault());
 load();

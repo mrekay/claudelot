@@ -12,7 +12,7 @@ let CFG = null, INFO = null;
 const S = {
   projects: [], history: {}, tabs: [], active: null,
   pending: [], agents: [], notifs: [], unread: 0, usage: null,
-  lastTool: {}, modified: {}, mode: 'claude', collapsed: {}, showAll: {},
+  lastTool: {}, modified: {}, mode: 'claude', collapsed: {}, showAll: {}, live: [],
 };
 const early = new Map();
 let seq = 1;
@@ -52,8 +52,9 @@ const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
 const proj = id => S.projects.find(p => p.id === id);
 const tabById = id => S.tabs.find(t => t.id === id);
-const tabBySession = sid => sid && S.tabs.find(t => t.sessionId === sid);
+const tabBySession = sid => sid && S.tabs.find(t => t.sessionId === sid && t.kind !== 'watch');
 const addr = () => ((CFG && CFG.settings.name) || '').trim();
+const firstName = n => String(n || '').trim().split(/\s+/)[0] || '';
 function rel(ms) {
   const m = Math.floor((Date.now() - ms) / 60000);
   if (m < 1) return 'şimdi';
@@ -117,7 +118,7 @@ function termTheme() {
 function applySkin(k) {
   if (k === 'violet') delete document.documentElement.dataset.skin; else document.documentElement.dataset.skin = k;
   const th = termTheme();
-  S.tabs.forEach(t => { t.term.options.theme = th; });
+  S.tabs.forEach(t => { if (t.term) t.term.options.theme = th; });
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applySkin(CFG.settings.skin));
 function renderSkinMenu() {
@@ -137,9 +138,11 @@ async function refreshUsage() {
 }
 
 /* ---------------- terminals ---------------- */
-function tabIcon(t) { return t.kind === 'shell' ? (SHELL_ICONS[t.shell] || '<i class="shi fa-solid fa-terminal"></i>') : `<span class="dot ${t.status}"></span>`; }
+function tabIcon(t) { if (t.kind === 'watch') return `<span class="dot ${t.status}"></span><i class="fa-solid fa-eye watch-ic" title="Claudelot dışında açık, izleniyor"></i>`; return t.kind === 'shell' ? (SHELL_ICONS[t.shell] || '<i class="shi fa-solid fa-terminal"></i>') : `<span class="dot ${t.status}"></span>`; }
 
 async function openTerminal({ kind = 'claude', shell, projectId, resume, title, overrides }) {
+  // already running in an outside terminal: follow it instead of starting a second copy
+  if (resume && isExtLive(resume)) return openWatch(resume);
   const p = proj(projectId); if (!p) return null;
   if (resume) { const ex = tabBySession(resume); if (ex) { activate(ex.id); return ex; } }
   const el = document.createElement('div');
@@ -197,21 +200,27 @@ function numberSuffix(pid, shell) {
 }
 function fitActive() {
   const t = tabById(S.active);
-  if (t && t.el.offsetParent) { try { t.fit.fit(); } catch (_) {} }
+  if (t && t.fit && t.el.offsetParent) { try { t.fit.fit(); } catch (_) {} }
 }
 function activate(id) {
   const t = tabById(id); if (!t) return;
   S.active = id;
-  if (S.mode === 'ide' && t.projectId !== IDE.project) { IDE.project = t.projectId; showFile(); }
+  if (S.mode === 'ide' && t.projectId && t.projectId !== IDE.project) { IDE.project = t.projectId; showFile(); }
   $$('.term-pane').forEach(x => x.classList.toggle('on', x === t.el));
   renderAll();
-  requestAnimationFrame(() => { fitActive(); t.term.focus(); });
+  requestAnimationFrame(() => {
+    fitActive();
+    if (t.term) t.term.focus();
+    else if (t.stick) { const log = t.el.querySelector('.watch-log'); log.scrollTop = log.scrollHeight; }
+  });
 }
 function closeTab(id) {
   const t = tabById(id); if (!t) return;
-  if (!t.exited && (t.status === 'running' || t.status === 'waiting') && !confirm(`"${t.title}" hâlâ çalışıyor. Terminal kapatılsın mı?\nClaude oturumu geçmişte kalır, sonra devam ettirebilirsin.`)) return;
-  if (!t.exited) api.send('pty:kill', t.id);
-  t.term.dispose(); t.el.remove();
+  if (t.kind !== 'watch' && !t.exited && (t.status === 'running' || t.status === 'waiting') && !confirm(`"${t.title}" hâlâ çalışıyor. Terminal kapatılsın mı?\nClaude oturumu geçmişte kalır, sonra devam ettirebilirsin.`)) return;
+  if (t.kind === 'watch') clearInterval(t.timer);
+  else if (!t.exited) api.send('pty:kill', t.id);
+  if (t.term) t.term.dispose();
+  t.el.remove();
   const idx = S.tabs.indexOf(t);
   S.tabs.splice(idx, 1);
   saveOpenTabs();
@@ -338,26 +347,155 @@ function decide(id, c) {
   renderAll();
 }
 
+/* ---------------- live sessions opened outside Claudelot ----------------
+   The main process lists running Claude sessions that none of our terminals own.
+   Clicking one opens a read-only "watch" tab that follows its transcript, so an
+   outside session is never started a second time with --resume. */
+const LIVE_ST = { busy: 'running', waiting: 'waiting', idle: 'idle' };
+const waitText = w => !w ? 'Kararını bekliyor' : /permission|izin/i.test(w) ? 'İzin bekliyor' : /dialog/i.test(w) ? 'Bir soruya cevap bekliyor' : w;
+const projOfCwd = cwd => cwd && S.projects.find(p => normPath(p.path) === normPath(cwd));
+const outsideOf = pid => S.live.filter(s => { const p = projOfCwd(s.cwd); return p && p.id === pid; });
+const isExtLive = sid => S.live.some(s => s.sessionId === sid);
+const watchTab = sid => S.tabs.find(t => t.kind === 'watch' && t.sessionId === sid);
+const extWaiting = () => S.live.filter(s => s.status === 'waiting');
+const pendingCount = () => S.pending.length + extWaiting().length;
+
+function setLive(list) {
+  const prev = new Map(S.live.map(s => [s.sessionId, s.status]));
+  S.live = (list || []).filter(s => !S.tabs.some(t => t.kind !== 'watch' && t.sessionId === s.sessionId));
+  for (const s of S.live) {
+    const was = prev.get(s.sessionId);
+    if (!was) continue;
+    const w = watchTab(s.sessionId);
+    const where = `${shorten(s.title, 60)} · ${(projOfCwd(s.cwd) || {}).name || baseName(s.cwd)} (dışarıda)`;
+    if (was === 'busy' && s.status === 'idle') notify('done', 'İş bitti' + (addr() ? ', ' + addr() : ''), where, w && w.id);
+    if (was !== 'waiting' && s.status === 'waiting') notify('decision', 'Kararını bekliyor', `${where}: ${waitText(s.waitingFor)}`, w && w.id);
+  }
+  for (const t of S.tabs.filter(x => x.kind === 'watch')) {
+    const s = S.live.find(x => x.sessionId === t.sessionId);
+    t.ext = s || null;
+    t.status = s ? LIVE_ST[s.status] || 'idle' : 'exited';
+    if (s) t.title = shorten(s.title, 48);
+    renderWatchBar(t);
+  }
+  renderAll();
+}
+
+function openWatch(sid) {
+  const ex = watchTab(sid);
+  if (ex) { if (S.mode === 'ide' && ex.projectId && ex.projectId !== IDE.project) switchIdeProject(ex.projectId); activate(ex.id); return ex; }
+  const s = S.live.find(x => x.sessionId === sid);
+  const p = s && projOfCwd(s.cwd);
+  const el = document.createElement('div');
+  el.className = 'term-pane watch-pane';
+  el.innerHTML = '<div class="watch-bar"></div><div class="watch-log"><div class="watch-note">Konuşma okunuyor…</div></div>';
+  $('#termHost').appendChild(el);
+  const tab = {
+    id: 'w' + (seq++), kind: 'watch', sessionId: sid, projectId: p ? p.id : null, cwd: s ? s.cwd : '',
+    el, exited: false, prompted: false, ext: s || null, offset: 0, first: true, stick: true,
+    title: shorten(s ? s.title : 'Oturum', 48), status: s ? LIVE_ST[s.status] || 'idle' : 'exited',
+  };
+  const log = el.querySelector('.watch-log');
+  log.addEventListener('scroll', () => { tab.stick = log.scrollHeight - log.scrollTop - log.clientHeight < 60; });
+  log.addEventListener('click', e => {
+    const a = e.target.closest('a[href]'); if (!a) return;
+    e.preventDefault();
+    if (/^https?:/i.test(a.getAttribute('href'))) window.open(a.getAttribute('href'));
+  });
+  S.tabs.push(tab);
+  if (tab.projectId) S.collapsed[tab.projectId] = false;
+  renderWatchBar(tab);
+  pollWatch(tab);
+  tab.timer = setInterval(() => pollWatch(tab), 1500);
+  if (S.mode === 'ide' && tab.projectId && tab.projectId !== IDE.project) switchIdeProject(tab.projectId);
+  activate(tab.id);
+  return tab;
+}
+function renderWatchBar(t) {
+  const bar = t.el.querySelector('.watch-bar'); if (!bar) return;
+  const s = t.ext;
+  const st = s ? (s.status === 'waiting' ? waitText(s.waitingFor) : s.status === 'busy' ? 'Çalışıyor' : 'Hazır') : '';
+  bar.innerHTML = `<span class="dot ${t.status}"></span>`
+    + `<span class="wb-t"><b>${s ? 'Claudelot dışında açık' : 'Dışarıdaki oturum kapandı'}</b>${st ? ' · ' + esc(st) : ''}`
+    + `<small>${esc(s ? s.cwd : t.cwd)}${s ? ' · PID ' + s.pid : ''} · sadece izleniyor</small></span>`
+    + (s
+      ? `<button class="btn primary" data-takeover="${t.sessionId}" title="Dışarıdaki claude sürecini kapatır, konuşmaya burada kaldığı yerden devam eder"><i class="fa-solid fa-right-to-bracket"></i> Claudelot'a al</button>`
+      : `<button class="btn primary" data-continue="${t.sessionId}" title="Konuşmaya bir Claudelot terminalinde kaldığı yerden devam eder"><i class="fa-solid fa-play"></i> Claudelot'ta devam et</button>`);
+}
+function watchEntryHTML(e) {
+  const tm = e.ts ? new Date(e.ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) : '';
+  if (e.k === 'user') return `<div class="wm user"><div class="wm-h">Sen<span>${tm}</span></div><div class="wm-b">${esc(e.text)}</div></div>`;
+  if (e.k === 'ai') return `<div class="wm ai"><div class="wm-h">Claude<span>${tm}</span></div><div class="wm-b md">${DOMPurify.sanitize(marked.parse(e.text, { gfm: true, breaks: false }))}</div></div>`;
+  return `<div class="wm tool" title="${esc(e.name)}: ${esc(e.text)}"><i class="fa-solid fa-wrench"></i><b>${esc(e.name)}</b><span>${esc(e.text)}</span></div>`;
+}
+async function pollWatch(t) {
+  if (t.busy || !S.tabs.includes(t)) return;
+  t.busy = true;
+  try {
+    const r = await api.invoke('live:tail', t.sessionId, t.offset);
+    if (!r) return;
+    const log = t.el.querySelector('.watch-log');
+    if (t.first || r.offset < t.offset) {
+      log.innerHTML = r.missing ? '<div class="watch-note">Konuşma kaydı bulunamadı.</div>' : r.trimmed ? '<div class="watch-note">Uzun konuşma: son kısmı gösteriliyor.</div>' : '';
+      t.first = false;
+    }
+    t.offset = r.offset;
+    if (!r.entries.length) {
+      if (!log.children.length) log.innerHTML = '<div class="watch-note empty">Henüz mesaj yok.</div>';
+      return;
+    }
+    const empty = log.querySelector('.watch-note.empty'); if (empty) empty.remove();
+    log.insertAdjacentHTML('beforeend', r.entries.map(watchEntryHTML).join(''));
+    while (log.children.length > 1500) log.firstElementChild.remove();
+    if (t.stick) log.scrollTop = log.scrollHeight;
+  } catch (_) {
+  } finally { t.busy = false; }
+}
+async function takeOverSession(sid) {
+  const s = S.live.find(x => x.sessionId === sid);
+  if (!s) return continueHere(sid);
+  const warn = s.status === 'busy' ? '\n\nDİKKAT: Oturum şu an çalışıyor; yarım kalan iş kesilir.' : '';
+  if (!confirm(`"${shorten(s.title, 60)}" şu an başka bir terminalde açık (PID ${s.pid}).\n\nClaudelot'a almak için oradaki claude süreci kapatılacak, konuşma burada kaldığı yerden devam edecek.${warn}\n\nDevam edilsin mi?`)) return;
+  const r = await api.invoke('live:takeover', sid);
+  if (!r || !r.ok) { toast('Devralınamadı', (r && r.error) || ''); return; }
+  await continueHere(sid, s.cwd);
+}
+async function continueHere(sid, cwd) {
+  const w = watchTab(sid);
+  const title = w ? w.title : 'Oturum';
+  cwd = cwd || (w && w.cwd);
+  S.live = S.live.filter(x => x.sessionId !== sid);
+  let p = (w && proj(w.projectId)) || projOfCwd(cwd);
+  if (!p && cwd) { const np = await api.invoke('project:addPath', cwd); if (np) { await projectAdded(np); p = proj(np.id); } }
+  if (!p) { toast('Proje bulunamadı', cwd || ''); return; }
+  if (w) closeTab(w.id);
+  await openTerminal({ kind: 'claude', projectId: p.id, resume: sid, title });
+}
+
 /* ---------------- rendering: claude mode ---------------- */
 const chevron = '<i class="fa-solid fa-chevron-down chev" aria-hidden="true"></i>';
 // projects start folded unless they have an open terminal; a click on the header overrides that
-const isCollapsed = pid => (pid in S.collapsed ? S.collapsed[pid] : !S.tabs.some(t => t.projectId === pid));
+const isCollapsed = pid => (pid in S.collapsed ? S.collapsed[pid] : !S.tabs.some(t => t.projectId === pid) && !outsideOf(pid).length);
 function renderSide() {
-  const activeProjects = S.projects.filter(p => S.tabs.some(t => t.projectId === p.id));
-  if (!activeProjects.length) {
+  const activeProjects = S.projects.filter(p => S.tabs.some(t => t.projectId === p.id) || outsideOf(p.id).length);
+  const orphans = S.live.filter(s => !projOfCwd(s.cwd));
+  const orphanTabs = S.tabs.filter(t => t.kind === 'watch' && !t.projectId && !t.ext);
+  if (!activeProjects.length && !orphans.length && !orphanTabs.length) {
     $('#side').innerHTML = `<div class="side-empty"><i class="fa-solid fa-play"></i><b>Açık oturum yok</b><span>Üstteki <b>Proje Başlat</b> ile bir proje seç; geçmiş oturumlar da orada.</span></div>`;
     if (!$('#startPanel').hidden) renderStartList();
     return;
   }
   $('#side').innerHTML = activeProjects.map(p => {
-    const live = S.tabs.filter(t => t.projectId === p.id);
-    const liveIds = new Set(live.map(t => t.sessionId).filter(Boolean));
+    const live = S.tabs.filter(t => t.projectId === p.id && !(t.kind === 'watch' && t.ext));
+    const ext = outsideOf(p.id);
+    const liveIds = new Set([...live.map(t => t.sessionId), ...ext.map(s => s.sessionId)].filter(Boolean));
     const hist = (S.history[p.id] || []).filter(h => !liveIds.has(h.id));
     const limit = S.showAll[p.id] ? 40 : 5;
     const items = live.map(t => `<li><button class="sess live ${t.id === S.active ? 'active' : ''}" data-tab="${t.id}" title="${esc(t.title)} · ${STATUS_TEXT[t.status]}">${tabIcon(t)}<span class="sess-t">${esc(t.title)}</span><span class="sess-time">${STATUS_SHORT[t.status]}</span></button></li>`).join('')
+      + ext.map(s => extRow(s)).join('')
       + hist.slice(0, limit).map(h => `<li><button class="sess" data-resume="${h.id}" data-pid="${p.id}" title="${esc(h.title)}&#10;Kaldığı yerden devam ettirmek için tıkla"><span class="dot idle"></span><span class="sess-t">${esc(h.title)}</span><span class="sess-time">${rel(h.mtime)}</span></button></li>`).join('')
       + (hist.length > limit ? `<li><button class="sess-more" data-more="${p.id}">+ ${hist.length - limit} oturum daha</button></li>` : '')
-      + (!live.length && !hist.length ? '<li class="empty-side" style="padding:4px 8px">Henüz oturum yok</li>' : '');
+      + (!live.length && !ext.length && !hist.length ? '<li class="empty-side" style="padding:4px 8px">Henüz oturum yok</li>' : '');
     return `<div class="proj ${isCollapsed(p.id) ? 'collapsed' : ''}">
       <div class="proj-row">
         <button class="proj-toggle" data-toggle="${p.id}">${chevron}<span class="proj-name">${esc(p.name)}</span><span class="proj-path" title="${esc(p.path)}">${esc(p.path)}</span></button>
@@ -367,6 +505,17 @@ function renderSide() {
       <ul class="sess-list">${items}</ul>
     </div>`;
   }).join('');
+  if (orphans.length || orphanTabs.length) {
+    $('#side').insertAdjacentHTML('beforeend', `<div class="proj ext-group">
+      <div class="proj-row"><span class="proj-toggle" title="Claudelot'taki projelerin dışındaki klasörlerde açık oturumlar"><i class="fa-solid fa-eye chev" aria-hidden="true"></i><span class="proj-name">Diğer klasörler</span></span></div>
+      <ul class="sess-list">${orphans.map(s => extRow(s, true)).join('')}${orphanTabs.map(t => `<li><button class="sess live ${t.id === S.active ? 'active' : ''}" data-tab="${t.id}">${tabIcon(t)}<span class="sess-t">${esc(t.title)}</span><span class="sess-time">kapandı</span></button></li>`).join('')}</ul>
+    </div>`);
+  }
+}
+function extRow(s, showDir) {
+  const w = watchTab(s.sessionId), st = LIVE_ST[s.status] || 'idle';
+  const tip = `${s.title}\n${s.cwd}\nClaudelot dışında açık (PID ${s.pid}) · ${s.status === 'waiting' ? waitText(s.waitingFor) : STATUS_TEXT[st]}\nİzlemek için tıkla`;
+  return `<li><button class="sess live ext ${w && w.id === S.active ? 'active' : ''}" data-watch="${s.sessionId}" title="${esc(tip)}"><span class="dot ${st}"></span><span class="sess-t">${showDir ? `<span class="sess-dir">${esc(baseName(s.cwd))}</span> ` : ''}${esc(s.title)}</span><span class="sess-time ext-tag">dışarıda</span></button></li>`;
 }
 function renderTabs() {
   const tabHTML = t => `<div class="tab ${t.id === S.active ? 'active' : ''}" role="tab"><button data-tab="${t.id}" title="${esc((proj(t.projectId) || {}).name)} · ${esc(t.title)} · ${STATUS_TEXT[t.status]}"><span class="tab-p">${esc((proj(t.projectId) || {}).name || '')}</span>${tabIcon(t)}<span class="tab-t">${esc(t.title)}</span></button><button class="tab-x" data-close="${t.id}" aria-label="Terminali kapat" title="Kapat">×</button></div>`;
@@ -386,8 +535,13 @@ function renderTabs() {
   }
 }
 function renderQueue() {
-  $('#qCount').textContent = S.pending.length;
-  $('#queue').innerHTML = S.pending.length ? S.pending.map(d => {
+  $('#qCount').textContent = pendingCount();
+  const extCards = extWaiting().map(s => `<div class="card ext">
+      <div class="card-top"><span class="chip">Dışarıda</span><button class="ghost who" data-watch="${s.sessionId}"><b>${esc(shorten(s.title, 60))}</b> · ${esc((projOfCwd(s.cwd) || {}).name || baseName(s.cwd))}</button></div>
+      <div class="card-q">${esc(waitText(s.waitingFor))}</div>
+      <div class="card-n">Bu oturum Claudelot dışında açık; cevabı kendi penceresinden ver ya da oturumu buraya al.</div>
+      <div class="acts"><button class="btn" data-watch="${s.sessionId}">İzle</button><button class="btn" data-takeover="${s.sessionId}">Claudelot'a al</button></div></div>`).join('');
+  $('#queue').innerHTML = pendingCount() ? extCards + S.pending.map(d => {
     const t = tabById(d.tabId) || { title: '?' }, p = proj(t.projectId) || {};
     const label = { permission: 'İzin', plan: 'Plan', question: 'Soru' }[d.kind];
     let acts;
@@ -412,22 +566,24 @@ function renderUsage() {
   const dc = u.dayCost || [];
   $('#usage').innerHTML = head
     + `<div class="days">${u.days.map((v, i) => `<div class="day ${i > u.today ? 'future' : ''} ${i === u.today ? 'today' : ''}" title="${names[i]}: ${i > u.today ? 'henüz yok' : fmtTok(v) + ' token · ≈ ' + fmtUsd(dc[i] || 0)}"><i style="${i > u.today ? '' : `height:${Math.max(3, v / max * 42)}px`}"></i><span>${names[i]}</span></div>`).join('')}</div>`
-    + `<div class="usage-foot"><span>Bu hafta <b>${fmtTok(u.total)}</b> token</span><span>Bugün <b>${fmtTok(u.days[u.today])}</b></span></div>`
-    + (u.cost != null ? `<div class="usage-foot usage-usd"><span>≈ <b>${fmtUsd(u.cost)}</b></span><span>≈ <b>${fmtUsd(dc[u.today] || 0)}</b></span></div>` : '')
-    + `<div class="usage-note">Dolar, API liste fiyatıyla karşılığıdır; abonelikte ayrıca ödenmez. Limit doluluğu için Claude'da <b>/usage</b> yaz.</div>`;
+    + `<div class="usage-stats">${[
+      ['Son 5 saat', u.last5h ? u.last5h.t : 0, u.last5h ? u.last5h.c : null, 'Son 5 saatte harcanan token (Claude oturum limitleri 5 saatlik pencereyle sayılır)'],
+      ['Bugün', u.days[u.today], dc[u.today] || 0, 'Bugün harcanan token'],
+      ['Bu hafta', u.total, u.cost, 'Pazartesiden bu yana harcanan token'],
+    ].map(([l, t, c, tip]) => `<div class="us" title="${tip}"><small>${l}</small><b>${fmtTok(t)}</b>${u.cost != null && c != null ? `<span>≈ ${fmtUsd(c)}</span>` : ''}</div>`).join('')}</div>`;
 }
 function renderStatus() {
-  const running = S.tabs.filter(t => t.status === 'running').length;
+  const running = S.tabs.filter(t => t.status === 'running' && t.kind !== 'watch').length;
   const claudeOk = INFO && INFO.claude;
   const u = S.usage;
   const usageChip = u ? `<button class="sb-chip" data-report="1" title="Bu hafta · aylık rapor için tıkla (Ctrl+Shift+R)"><i class="fa-solid fa-chart-column"></i> ${fmtTok(u.total)} token${u.cost != null ? ' · ≈ ' + fmtUsd(u.cost) : ''}</button>` : '';
-  $('#statusbar').innerHTML = `<span><b>${running}</b> çalışıyor</span><span><b>${S.pending.length}</b> karar bekliyor</span><span><b>${S.agents.length}</b> ajan / workflow</span><span><b>${S.tabs.filter(t => !t.exited).length}</b> açık terminal</span>`
+  $('#statusbar').innerHTML = `<span><b>${running}</b> çalışıyor</span><span><b>${pendingCount()}</b> karar bekliyor</span>${S.live.length ? `<span title="Claudelot dışında açık Claude oturumları"><b>${S.live.length}</b> dışarıda</span>` : ''}<span><b>${S.agents.length}</b> ajan / workflow</span><span><b>${S.tabs.filter(t => !t.exited).length}</b> açık terminal</span>`
     + `<span style="margin-left:auto"></span>${usageChip}`
     + `<button class="sb-chip" data-settab="claude" title="Yeni Claude oturumlarının varsayılanları · değiştirmek için tıkla"><i class="fa-solid fa-sliders"></i> ${esc(claudeSummary())}</button>`
     + `<span class="${claudeOk ? '' : 'warn'}">${claudeOk ? 'Claude Code bağlı' : 'claude komutu bulunamadı'} · bildirim portu ${INFO ? INFO.hookPort : '-'}</span>`;
-  const pb = $('#pillBadge'); pb.hidden = !S.pending.length || S.mode !== 'ide'; pb.textContent = S.pending.length;
+  const pb = $('#pillBadge'); pb.hidden = !pendingCount() || S.mode !== 'ide'; pb.textContent = pendingCount();
   const bb = $('#bellBadge'); bb.hidden = !S.unread; bb.textContent = S.unread > 9 ? '9+' : S.unread;
-  api.send('tray:update', { running, pending: S.pending.length });
+  api.send('tray:update', { running, pending: pendingCount() });
 }
 function renderPop() {
   $('#nlist').innerHTML = S.notifs.length ? S.notifs.map(n => `<button class="nitem" ${n.tabId ? `data-tab="${n.tabId}"` : ''}><span class="ic ${n.type}">${ICONS[n.type] || 'i'}</span><span class="tx"><b>${esc(n.title)}</b><span>${esc(n.body)}</span></span><span class="tm">${new Date(n.t).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span></button>`).join('') : '<div class="n-empty">Henüz bildirim yok.</div>';
@@ -865,8 +1021,9 @@ function renderSettings() {
   let h = '';
   if (setTab === 'hitap') {
     h = `<h4>Claude sana nasıl hitap etsin?</h4>
-      <input type="text" id="fName" data-field="name" value="${esc(st.name)}" placeholder="ör. Başkanım">
-      <div class="chips">${['Başkanım', 'Hocam', 'Şefim', 'Patron'].map(c => `<button class="chip-btn ${st.name === c ? 'on' : ''}" data-hitap="${c}">${c}</button>`).join('')}<button class="chip-btn ${!addr() ? 'on' : ''}" data-hitap="">Hitapsız</button></div>
+      <input type="text" id="fName" data-field="name" value="${esc(st.name)}" placeholder="Boş bırakırsan hitap kullanılmaz">
+      <div class="chips">${[...new Set([firstName((CFG.identity || {}).name), 'Başkanım', 'Hocam', 'Şefim', 'Patron'].filter(Boolean))].map(c => `<button class="chip-btn ${st.name === c ? 'on' : ''}" data-hitap="${c}">${c}</button>`).join('')}<button class="chip-btn ${!addr() ? 'on' : ''}" data-hitap="">Hitapsız</button></div>
+      <p class="set-note">${(CFG.identity || {}).name ? `Adın ${(CFG.identity || {}).source === 'github' ? 'GitHub' : 'git'} ayarlarından alındı: <b>${esc(CFG.identity.name)}</b>. ` : ''}Bir oturumda Claude'a “bana … diye hitap et” dersen burası da güncellenir.</p>
       <h4>Konuşma tonu</h4>
       <div class="seg">${Object.keys(TONES).map(k => `<button class="${st.tone === k ? 'on' : ''}" data-tone="${k}">${TONES[k]}</button>`).join('')}</div>
       <h4>Yanıt dili</h4>
@@ -936,7 +1093,11 @@ function bindEvents() {
     if (e.target.id === 'report') { $('#report').hidden = true; return; }
     if (!el) return;
     const d = el.dataset;
-    if (d.mode) setMode(d.mode);
+    if (d.panel) togglePanel(d.panel);
+    else if (d.watch) { if (S.mode === 'claude' || S.mode === 'ide') openWatch(d.watch); }
+    else if (d.takeover) takeOverSession(d.takeover);
+    else if (d.continue) continueHere(d.continue);
+    else if (d.mode) setMode(d.mode);
     else if (d.tab) { if (S.mode === 'ide' && tabById(d.tab) && tabById(d.tab).projectId !== IDE.project) switchIdeProject(tabById(d.tab).projectId); activate(d.tab); $('#pop').hidden = true; }
     else if (d.close) closeTab(d.close);
     else if (d.resume) {
@@ -990,6 +1151,7 @@ function bindEvents() {
   $('#setClose').onclick = () => { $('#settings').hidden = true; };
   $('#discClose').onclick = () => { $('#discover').hidden = true; };
   $('#repClose').onclick = () => { $('#report').hidden = true; };
+  $('#repInfoBtn').onclick = () => { const n = $('#repInfo'); n.hidden = !n.hidden; $('#repInfoBtn').setAttribute('aria-expanded', !n.hidden); };
   $('#addProjBtn').onclick = () => { closeStartPanel(); openDiscover(); };
   $('#startBtn').onclick = () => ($('#startPanel').hidden ? openStartPanel() : closeStartPanel());
   $('#startQ').addEventListener('input', () => { START.sel = 0; renderStartList(); });
@@ -1072,6 +1234,7 @@ function bindEvents() {
   api.on('open-project', async () => handleOpen(await api.invoke('app:takePendingOpen')));
   api.on('projects-changed', async list => { S.projects = list; CFG.projects = list; await refreshAllHistory(); renderAll(); });
   api.on('config-changed', c => { CFG = c; renderSettings(); });
+  api.on('address-learned', n => toast('Hitap güncellendi', n ? `Bundan sonra “${n}” diye hitap edilecek.` : 'Bundan sonra hitap kullanılmayacak.'));
   window.addEventListener('beforeunload', e => {
     if (Object.keys(IDE.files).some(isDirty)) { e.returnValue = false; }
   });
@@ -1257,6 +1420,8 @@ async function init() {
   applyPanels();
   renderUsage();
   await refreshAllHistory();
+  api.on('live-sessions', setLive);
+  try { setLive(await api.invoke('live:list')); } catch (_) {}
   setMode(CFG.settings.mode === 'ide' ? 'ide' : 'claude', true);
   refreshUsage();
   setInterval(refreshUsage, 120000);

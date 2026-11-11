@@ -8,7 +8,7 @@ const fsp = fs.promises;
 const os = require('os');
 const http = require('http');
 const crypto = require('crypto');
-const { execFileSync } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 const pty = require('@lydell/node-pty');
 const { appIcon } = require('./icon');
 
@@ -38,7 +38,7 @@ const DEFAULTS = {
   projects: [],
   lastTabs: [], // terminals that were open last time: {projectId, kind, shell, sessionId, title}
   settings: {
-    name: 'Başkanım', tone: 'samimi', lang: 'tr', extra: '',
+    name: '', tone: 'samimi', // name: filled from git / GitHub on first launch, else no form of address lang: 'tr', extra: '',
     closeToTray: true, autostart: false, sound: true, welcome: true,
     // defaults for every Claude session Claudelot starts ('' = leave it to Claude Code)
     claude: { model: '', effort: '', permissionMode: '', remoteControl: false },
@@ -183,6 +183,158 @@ async function discoverProjects() {
   return found.sort((a, b) => b.mtime - a.mtime);
 }
 
+/* ---------------- live sessions ----------------
+   Claude Code keeps ~/.claude/sessions/<pid>.json for every running session, with
+   its session id, folder and status (busy / idle / waiting). Sessions opened in an
+   outside terminal show up here, so Claudelot can follow them instead of starting
+   a second copy with --resume. */
+const SESSIONS_DIR = path.join(CLAUDE_DIR, 'sessions');
+const SID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+const ownPid = new Map(); // claude pid -> started by one of our terminals?
+function classifyPids(pids) {
+  // a terminal may run claude through cmd.exe, so check the parent process as well
+  const todo = pids.filter(p => !ownPid.has(p));
+  if (!todo.length) return;
+  const roots = new Set([...ptys.values()].map(p => p.pid));
+  const parents = {};
+  try {
+    const filter = todo.map(p => 'ProcessId=' + p).join(' or ');
+    const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      `Get-CimInstance Win32_Process -Filter '${filter}' | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }`],
+      { encoding: 'utf8', windowsHide: true, timeout: 8000 });
+    for (const line of out.split(/\r?\n/)) { const [a, b] = line.trim().split(/\s+/).map(Number); if (a) parents[a] = b; }
+  } catch (_) {}
+  for (const p of todo) ownPid.set(p, roots.has(p) || roots.has(parents[p]));
+}
+let liveList = [], liveSig = '', liveBusy = false;
+async function scanLive() {
+  if (liveBusy) return liveList;
+  liveBusy = true;
+  try {
+    let files = [];
+    try { files = (await fsp.readdir(SESSIONS_DIR)).filter(f => /^\d+\.json$/.test(f)); } catch (_) {}
+    const raw = [];
+    for (const f of files) {
+      let o; try { o = JSON.parse(await fsp.readFile(path.join(SESSIONS_DIR, f), 'utf8')); } catch (_) { continue; }
+      if (!o || !o.pid || !SID_RE.test(o.sessionId || '') || (o.kind && o.kind !== 'interactive')) continue;
+      if (!pidAlive(o.pid)) continue;
+      raw.push(o);
+    }
+    classifyPids(raw.map(o => o.pid));
+    const list = [];
+    for (const o of raw) {
+      if (ownPid.get(o.pid)) continue;
+      const file = path.join(PROJECTS_DIR, encodeProjectDir(o.cwd || ''), o.sessionId + '.jsonl');
+      let title = o.name || 'Oturum';
+      try { const st = await fsp.stat(file); title = (await sessionMeta(file, st.mtimeMs)).title; } catch (_) {}
+      list.push({
+        pid: o.pid, sessionId: o.sessionId, cwd: o.cwd || '', title,
+        status: o.status || 'idle', waitingFor: o.waitingFor || '',
+        startedAt: o.startedAt || 0, updatedAt: o.statusUpdatedAt || o.updatedAt || 0,
+      });
+    }
+    list.sort((a, b) => b.startedAt - a.startedAt);
+    for (const p of [...ownPid.keys()]) if (!raw.some(o => o.pid === p)) ownPid.delete(p);
+    liveList = list;
+    const sig = JSON.stringify(list);
+    if (sig !== liveSig) { liveSig = sig; send('live-sessions', list); }
+    return list;
+  } finally { liveBusy = false; }
+}
+function watchLive() {
+  let t = null;
+  const kick = () => { clearTimeout(t); t = setTimeout(() => scanLive().catch(() => {}), 250); };
+  try { fs.mkdirSync(SESSIONS_DIR, { recursive: true }); fs.watch(SESSIONS_DIR, kick); } catch (_) {}
+  setInterval(kick, 4000); // also catches sessions whose process died without cleaning up
+  kick();
+}
+function transcriptOf(sessionId) {
+  const s = liveList.find(x => x.sessionId === sessionId);
+  if (s) return path.join(PROJECTS_DIR, encodeProjectDir(s.cwd), sessionId + '.jsonl');
+  try {
+    for (const d of fs.readdirSync(PROJECTS_DIR)) {
+      const f = path.join(PROJECTS_DIR, d, sessionId + '.jsonl');
+      if (fs.existsSync(f)) return f;
+    }
+  } catch (_) {}
+  return null;
+}
+function liveEntries(o) {
+  // turn one transcript line into what the watch view shows; most lines are bookkeeping
+  if (o.isSidechain) return [];
+  if (o.type === 'attachment' && o.attachment && o.attachment.type === 'queued_command' && typeof o.attachment.prompt === 'string') {
+    return [{ k: 'user', text: o.attachment.prompt, ts: o.timestamp }];
+  }
+  if (!o.message) return [];
+  const c = o.message.content;
+  if (o.type === 'user' && !o.isMeta) {
+    if (typeof c === 'string') return c.trim() && !c.startsWith('<') ? [{ k: 'user', text: c, ts: o.timestamp }] : [];
+    if (Array.isArray(c)) {
+      const text = c.filter(b => b.type === 'text' && !String(b.text).startsWith('<')).map(b => b.text).join('\n').trim();
+      const imgs = c.filter(b => b.type === 'image').length;
+      if (text || imgs) return [{ k: 'user', text: text + (imgs ? `${text ? '\n' : ''}[${imgs} görsel]` : ''), ts: o.timestamp }];
+    }
+    return [];
+  }
+  if (o.type === 'assistant' && Array.isArray(c)) {
+    const out = [];
+    for (const b of c) {
+      if (b.type === 'text' && b.text.trim()) out.push({ k: 'ai', text: b.text, ts: o.timestamp });
+      else if (b.type === 'tool_use') {
+        const i = b.input || {};
+        const what = i.description || i.command || i.file_path || i.pattern || i.url || i.query || i.prompt || '';
+        out.push({ k: 'tool', name: b.name, text: String(what).replace(/\s+/g, ' ').slice(0, 300), ts: o.timestamp });
+      }
+    }
+    return out;
+  }
+  return [];
+}
+const TAIL_FIRST = 3 * 1024 * 1024; // first read of a long transcript starts this far from the end
+async function tailTranscript(sessionId, offset) {
+  if (!SID_RE.test(sessionId || '')) return null;
+  const file = transcriptOf(sessionId);
+  if (!file) return { offset: 0, entries: [], missing: true };
+  let st; try { st = await fsp.stat(file); } catch (_) { return { offset: 0, entries: [], missing: true }; }
+  let from = offset || 0, trimmed = false;
+  if (from > st.size) from = 0;
+  if (!offset && st.size > TAIL_FIRST) { from = st.size - TAIL_FIRST; trimmed = true; }
+  if (from === st.size) return { offset: from, entries: [] };
+  const fh = await fsp.open(file, 'r');
+  let buf;
+  try {
+    buf = Buffer.alloc(st.size - from);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, from);
+    buf = buf.slice(0, bytesRead);
+  } finally { await fh.close(); }
+  // only consume complete lines; a half-written last line is read again next time
+  const end = buf.lastIndexOf(0x0a);
+  if (end < 0) return { offset: from, entries: [] };
+  const lines = buf.slice(0, end).toString('utf8').split('\n');
+  if (trimmed) lines.shift(); // started mid-line
+  const entries = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    let o; try { o = JSON.parse(line); } catch (_) { continue; }
+    entries.push(...liveEntries(o));
+  }
+  if (offset) for (const e of entries) if (e.k === 'user') learnAddress(e.text);
+  return { offset: from + end + 1, entries, trimmed };
+}
+async function takeOver(sessionId) {
+  // close the outside copy so the conversation can continue in a Claudelot terminal
+  const s = liveList.find(x => x.sessionId === sessionId);
+  if (!s) return { ok: true };
+  try { process.kill(s.pid); } catch (e) { return { ok: false, error: 'Dışarıdaki oturum kapatılamadı: ' + e.message }; }
+  for (let i = 0; i < 50 && pidAlive(s.pid); i++) await new Promise(r => setTimeout(r, 100));
+  if (pidAlive(s.pid)) return { ok: false, error: 'Dışarıdaki oturum kapanmadı.' };
+  await scanLive().catch(() => {});
+  return { ok: true, cwd: s.cwd };
+}
+
 /* ---------------- weekly usage (tokens from transcripts) ---------------- */
 /* API list prices, $ per million tokens (Anthropic first-party, Nov 2026).
    read = cache read price; cache writes cost 1.25x input (5 min) or 2x input (1 hour).
@@ -302,7 +454,12 @@ async function scanUsage() {
     if (rec) { days[i] = rec.t; dayCost[i] = rec.c; }
   }
   const keys = Object.keys(usageHistory).sort();
+  // rolling 5-hour window (Claude's session limits are counted over 5 hours)
+  const since = Date.now() - 5 * 3600e3;
+  const last5h = { t: 0, c: 0 };
+  for (const e of msgs.values()) if (e.ts >= since) { last5h.t += e.t; last5h.c += e.c || 0; }
   usageCache = {
+    last5h,
     days, dayCost, total: days.reduce((a, b) => a + b, 0), cost: dayCost.reduce((a, b) => a + b, 0),
     today: (now.getDay() + 6) % 7, weekStart: monday.getTime(), at: Date.now(),
     firstDay: keys[0] || null,
@@ -360,11 +517,79 @@ function startHookServer() {
       req.on('end', () => {
         res.end('');
         let ev; try { ev = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (_) { return; }
+        if (ev.hook_event_name === 'UserPromptSubmit' && ev.prompt) learnAddress(ev.prompt);
         send('hook', ev);
       });
     });
     server.listen(0, '127.0.0.1', () => { hookPort = server.address().port; writeHookSettings(); resolve(); });
   });
+}
+
+/* ---------------- who the user is (git / GitHub) ----------------
+   Read once on first launch so Claudelot can address the user by name; kept in
+   config.identity as the starting point for the git / GitHub features. */
+function runQuiet(cmd, args, timeout = 4000) {
+  return new Promise(res => {
+    try { execFile(cmd, args, { encoding: 'utf8', windowsHide: true, timeout }, (err, out) => res(err ? '' : String(out).trim())); } catch (_) { res(''); }
+  });
+}
+async function gitIdentity() {
+  const [name, email] = await Promise.all([runQuiet('git', ['config', '--global', 'user.name']), runQuiet('git', ['config', '--global', 'user.email'])]);
+  return { name, email };
+}
+async function githubIdentity() {
+  if (!whereFirst('gh').length) return {};
+  const out = await runQuiet('gh', ['api', 'user', '--jq', '[.login, (.name // "")] | @tsv'], 8000);
+  const [login, name] = out.split('\t');
+  return login ? { login, name: (name || '').trim() } : {};
+}
+const firstNameOf = n => String(n || '').trim().split(/\s+/)[0] || '';
+async function detectIdentity({ firstLaunch }) {
+  const g = await gitIdentity();
+  const id = { name: g.name, email: g.email, github: '', source: g.name ? 'git' : '', at: Date.now() };
+  // git is local and fast: on first launch, use it before the welcome screen opens
+  if (firstLaunch && !config.settings.name && id.name) setAddress(firstNameOf(id.name), false);
+  config.identity = id;
+  saveConfig();
+  // GitHub needs the network; fill in when it answers
+  githubIdentity().then(h => {
+    if (!h.login) return;
+    id.github = h.login;
+    if (!id.name && h.name) { id.name = h.name; id.source = 'github'; if (firstLaunch && !config.settings.name) setAddress(firstNameOf(h.name), true); }
+    config.identity = id;
+    saveConfig();
+  }).catch(() => {});
+}
+function setAddress(name, notify) {
+  config.settings.name = name;
+  saveConfig();
+  writeAppendPrompt();
+  if (notify) send('config-changed', config);
+}
+
+/* "bana Ertuğrul diye hitap et" / "call me Ed" in a prompt updates the form of address */
+const NOT_A_NAME = /^(şöyle|böyle|öyle|nasıl|ne|bu|şu|o|bir|başka|farklı|this|that|what)$/i;
+function addressFromPrompt(text) {
+  const s = String(text || '').slice(0, 2000);
+  if (/bana\s+(?:artık\s+|bundan\s+sonra\s+)?(?:hiç\s+)?hitap\s+etme/i.test(s)) return '';
+  const pats = [
+    /bana\s+(?:bundan\s+sonra\s+|artık\s+)?["“'‘]?([^\n"”'’.,!?]{1,30}?)["”'’]?\s+(?:diye|olarak)\s+(?:hitap\s+et|seslen|çağır|de(?=[\s.,!?]|$)|söyle)/i,
+    /bana\s+["“'‘]?([^\s"”'’.,!?]{2,20})["”'’]?\s+de\s*(?:[.!]|$)/i,
+    /\bcall\s+me\s+["“']?([^\n"”'.,!?]{1,30}?)["”']?(?=[\s.,!?]|$)/i,
+  ];
+  for (const re of pats) {
+    const m = s.match(re);
+    if (!m) continue;
+    const name = m[1].trim().split(/\s+/).slice(0, 3).join(' ');
+    if (name && !NOT_A_NAME.test(name)) return name.charAt(0).toLocaleUpperCase('tr') + name.slice(1);
+  }
+  return null;
+}
+function learnAddress(text) {
+  const name = addressFromPrompt(text);
+  if (name === null || name === (config.settings.name || '')) return;
+  setAddress(name, true);
+  send('address-learned', name);
 }
 
 /* ---------------- "how to address me" prompt ---------------- */
@@ -569,6 +794,9 @@ function registerIpc() {
 
   ipcMain.handle('history:list', (_e, projectPath) => listSessions(projectPath));
   ipcMain.handle('usage:get', () => computeUsage());
+  ipcMain.handle('live:list', () => scanLive());
+  ipcMain.handle('live:tail', (_e, sid, offset) => tailTranscript(sid, offset));
+  ipcMain.handle('live:takeover', (_e, sid) => takeOver(sid));
 
   ipcMain.handle('pty:spawn', (_e, opts) => spawnTerminal(opts));
   ipcMain.on('pty:write', (_e, id, data) => { const p = ptys.get(id); if (p) p.write(data); });
@@ -594,8 +822,9 @@ function registerIpc() {
     send('projects-changed', config.projects);
     return p;
   });
-  // action: 'select' | 'claude' | 'ide' | 'main'
+  // action: 'select' | 'claude' | 'ide' | 'main' | 'settings'
   ipcMain.on('welcome:open', (_e, req) => {
+    if (req && req.action === 'settings') { showWindow(); send('open-settings'); closeWelcome(); return; }
     pendingOpen = req && (req.projectId || req.action === 'restoreAll') ? req : null;
     showWindow();
     if (pendingOpen) send('open-project', pendingOpen);
@@ -669,7 +898,9 @@ app.whenReady().then(async () => {
     saveConfigNow();
   }
   registerIpc();
+  if (firstRun || !config.identity) await detectIdentity({ firstLaunch: firstRun }).catch(() => {});
   computeUsage().catch(() => {});
   createWindow();
   createTray();
+  watchLive();
 });

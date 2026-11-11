@@ -1,5 +1,5 @@
 /* Welcome window — uses the color tokens from styles.css */
-.wl{height:100vh;display:grid;grid-template-columns:262px minmax(0,1fr);background:var(--surface)}
+.wl{user-select:none;-webkit-user-drag:none;height:100vh;display:grid;grid-template-columns:262px minmax(0,1fr);background:var(--surface)}
 .wl-side{background:var(--surface-2);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:22px 14px 16px;-webkit-app-region:drag}
 .wl-side button{-webkit-app-region:no-drag}
 .wl-brand{display:flex;align-items:center;gap:12px;padding:0 6px 22px}
@@ -29,7 +29,7 @@
 .wl-head p{margin:0;color:var(--muted);font-size:13.5px}
 .wl-search{margin:0 34px 10px;display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:0 12px;color:var(--muted)}
 .wl-search:focus-within{border-color:var(--accent)}
-.wl-search input{flex:1;min-width:0;border:0;background:none;outline:none;color:var(--fg);font:14px var(--f-body);padding:10px 0}
+.wl-search input{user-select:text;flex:1;min-width:0;border:0;background:none;outline:none;color:var(--fg);font:14px var(--f-body);padding:10px 0}
 .wl-search span{font-size:11.5px;white-space:nowrap}
 .wl-list{flex:1;overflow:auto;padding:4px 26px 18px}
 .wl-row{display:grid;grid-template-columns:38px minmax(0,1fr) auto;align-items:center;gap:12px;padding:8px 8px;border-radius:9px;cursor:pointer;position:relative}
