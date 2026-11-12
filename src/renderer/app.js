@@ -306,6 +306,7 @@ api.on('hook', ev => {
   const t = tabBySession(ev.session_id);
   if (!t) return;
   const name = ev.hook_event_name, tool = ev.tool_name, input = ev.tool_input || {};
+  if (name === 'SessionStart' && t.pendingPrompt) sendPendingPrompt(t);
   if (name === 'UserPromptSubmit') {
     clearPending(t); t.status = 'running';
     if (t.title === 'Yeni oturum' && ev.prompt) t.title = shorten(ev.prompt, 48);
@@ -1598,7 +1599,7 @@ function kisayolHTML() {
 /* ---------------- git / GitHub ----------------
    Title-bar button → drop-down panel (GitHub | Git tabs, project picker, last commits)
    → "Detaylar" window (changes, history, stash, diffs). Read-only. */
-const GIT = { tab: 'git', pid: null, ov: null, gh: null, err: '', loading: false, token: 0, drop: { sel: 0, view: [] }, head: {}, btnTimer: null, btnAt: 0, btnPid: null };
+const GIT = { tab: 'git', pid: null, ov: null, gh: null, err: '', loading: false, token: 0, drop: { sel: 0, view: [] }, head: {}, newRepo: {}, btnTimer: null, btnAt: 0, btnPid: null };
 const GW = { pid: null, view: 'history', ov: null, commits: [], more: true, sel: null, ltok: 0, dtok: 0 };
 const gitProj = () => proj(GIT.pid);
 const me = c => { const id = (CFG && CFG.identity) || {}; return !!((id.email && c.email && c.email.toLowerCase() === id.email.toLowerCase()) || (id.name && c.author === id.name)); };
@@ -1711,8 +1712,81 @@ function runIcon(r) {
   if (r.conclusion === 'failure' || r.conclusion === 'timed_out') return '<i class="fa-solid fa-circle-xmark ic-bad" title="Başarısız"></i>';
   return `<i class="fa-solid fa-ban ic-mut" title="${esc(r.conclusion || '')}"></i>`;
 }
+/* ---- no GitHub repo yet: create one with Claude, or on github.com and connect it here ---- */
+const repoSlug = n => String(n || '').replace(/ı/g, 'i').replace(/İ/g, 'I').normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'proje';
+const newRepo = pid => GIT.newRepo[pid] || (GIT.newRepo[pid] = { name: repoSlug((proj(pid) || {}).name), vis: 'private', opened: false });
+function newRepoHTML(g) {
+  if (g.remote) return `<div class="gp-note"><i class="fa-brands fa-github"></i>Bu projenin uzak deposu GitHub'da değil.<br><code>${esc(g.remote)}</code></div>`;
+  const r = newRepo(GIT.pid);
+  return `<div class="nr">
+    <div class="nr-h"><i class="fa-brands fa-github"></i><span>Bu projenin GitHub deposu yok.<small>Yeni bir depo oluşturup bu projeye bağlayabilirsin.</small></span></div>
+    <label class="nr-l">Depo adı<input id="nrName" value="${esc(r.name)}" spellcheck="false" autocomplete="off"></label>
+    <div class="nr-vis" role="radiogroup" aria-label="Görünürlük">
+      <button class="${r.vis === 'private' ? 'on' : ''}" data-nrvis="private" role="radio" aria-checked="${r.vis === 'private'}"><i class="fa-solid fa-lock"></i>Özel</button>
+      <button class="${r.vis === 'public' ? 'on' : ''}" data-nrvis="public" role="radio" aria-checked="${r.vis === 'public'}"><i class="fa-solid fa-globe"></i>Herkese açık</button>
+    </div>
+    <button class="nr-opt" data-nrclaude><i class="fa-solid fa-robot"></i><span><b>Claude ile GitHub'da oluştur</b><small>Yeni bir Claude oturumu git init, .gitignore, ilk commit, depo oluşturma ve push işlerini yapar.</small></span></button>
+    <button class="nr-opt" data-nrweb><i class="fa-brands fa-github"></i><span><b>GitHub üzerinden oluştur</b><small>github.com/new bu bilgilerle açılır. Oluşturunca adresini aşağıya yapıştır.</small></span></button>
+    <div class="nr-con ${r.opened ? 'hl' : ''}">
+      <span>Depoyu oluşturduysan adresini yapıştır, bu projeye bağlayayım:</span>
+      <div class="nr-row"><input id="nrUrl" placeholder="https://github.com/kullanici/${esc(r.name)}" spellcheck="false" autocomplete="off"><button class="btn primary" data-nrconnect>Bağla</button></div>
+    </div>
+  </div>`;
+}
+async function createWithClaude() {
+  const p = gitProj(); if (!p) return;
+  const r = newRepo(p.id);
+  r.name = repoSlug(r.name);
+  const prompt = `Bu projeyi GitHub'a yeni bir depo olarak yükle. Depo adı: "${r.name}", görünürlük: ${r.vis === 'private' ? 'özel (private)' : 'herkese açık (public)'}. `
+    + `Adımlar: 1) Klasör git deposu değilse git init yap, dal adı main olsun. 2) Uygun bir .gitignore yoksa projeye göre oluştur; .env, anahtar ve parola gibi gizli dosyalar kesinlikle commit edilmesin. `
+    + `3) Commit edilmemiş dosyalar varsa ilk commit'i at. 4) GitHub'da depoyu oluştur: gh CLI kurulu ve giriş yapılmışsa gh repo create kullan; değilse dur ve bana nasıl ilerleyeceğimizi sor. `
+    + `5) Depoyu origin olarak ekle ve push et. Başlamadan önce yapacaklarını kısaca listele.`;
+  closeGitPanel();
+  const t = await openTerminal({ kind: 'claude', projectId: p.id, title: 'GitHub deposu oluştur' });
+  if (!t) return;
+  t.pendingPrompt = prompt;
+  setTimeout(() => sendPendingPrompt(t), 12000); // in case the start event never arrives
+}
+// type the prompt once Claude Code is up (SessionStart hook), then press Enter
+function sendPendingPrompt(t) {
+  const text = t.pendingPrompt; if (!text) return;
+  t.pendingPrompt = null;
+  setTimeout(() => {
+    if (t.exited) return;
+    api.send('pty:write', t.id, text);
+    setTimeout(() => { if (!t.exited) api.send('pty:write', t.id, '\r'); }, 400);
+  }, 800);
+}
+function createOnWeb() {
+  const p = gitProj(); if (!p) return;
+  const r = newRepo(p.id);
+  r.name = repoSlug(r.name);
+  r.opened = true;
+  api.invoke('shell:openGithub', `https://github.com/new?name=${encodeURIComponent(r.name)}&visibility=${r.vis}`);
+  renderGitBody();
+  const u = $('#nrUrl'); if (u) u.focus();
+}
+async function connectRepo() {
+  const p = gitProj(), u = $('#nrUrl'); if (!p || !u) return;
+  const url = u.value.trim();
+  if (!url) { u.focus(); return; }
+  const btn = $('[data-nrconnect]'); btn.disabled = true; btn.textContent = 'Bağlanıyor…';
+  try {
+    const r = await api.invoke('git:connect', p.path, url);
+    toast(`${p.name} GitHub'a bağlandı`, (r.initialized ? 'Git deposu oluşturuldu. ' : '') + (r.pushed ? 'Commitler gönderildi.' : 'Henüz commit yok; ilk commit\'ten sonra Push ile gönderebilirsin.'));
+    delete GIT.newRepo[p.id];
+    GIT.gh = null; GIT.ov = null;
+    loadGit(true);
+    if (SYNC[p.id]) { SYNC[p.id].fetchedAt = 0; refreshSync(p.id); }
+    scheduleGitBtn(true);
+  } catch (e) {
+    toast('Bağlanamadı', cleanErr(e));
+    btn.disabled = false; btn.textContent = 'Bağla';
+  }
+}
 function githubBodyHTML(g) {
-  if (!g.github) return `<div class="gp-note"><i class="fa-brands fa-github"></i>Bu projenin GitHub uzak deposu yok.${g.remote ? `<br><code>${esc(g.remote)}</code>` : ''}</div>`;
+  if (!g.github) return newRepoHTML(g);
   const open = `<button class="btn" data-ghurl="${esc(g.github.url)}"><i class="fa-brands fa-github"></i> GitHub'da aç</button>`;
   const foot = `<div class="gh-foot"><span>${g.via === 'gh' ? `<i class="fa-solid fa-key"></i> GitHub CLI${g.login ? ' · ' + esc(g.login) : ''}` : '<i class="fa-solid fa-globe"></i> Herkese açık API (özel depolar görünmez)'}</span><button class="ghost" data-gitreload="force"><i class="fa-solid fa-arrows-rotate"></i> Yenile</button></div>`;
   if (!g.repo) {
@@ -1987,8 +2061,12 @@ function initGit() {
     else if (e.key === 'Escape') { e.stopPropagation(); closeGitDrop(); $('#gitProjBtn').focus(); }
   });
   $('#gitPanel').addEventListener('click', e => {
-    const el = e.target.closest('[data-gtab],[data-gitproj],[data-gitc],[data-gwopen],[data-gitreload],[data-ghurl]'); if (!el) return;
+    const el = e.target.closest('[data-gtab],[data-gitproj],[data-gitc],[data-gwopen],[data-gitreload],[data-ghurl],[data-nrvis],[data-nrclaude],[data-nrweb],[data-nrconnect]'); if (!el) return;
     const d = el.dataset;
+    if (d.nrvis) { newRepo(GIT.pid).vis = d.nrvis; renderGitBody(); return; }
+    if (d.nrclaude !== undefined) { createWithClaude(); return; }
+    if (d.nrweb !== undefined) { createOnWeb(); return; }
+    if (d.nrconnect !== undefined) { connectRepo(); return; }
     if (d.gtab) { if (d.gtab !== GIT.tab) setGitTab(d.gtab); }
     else if (d.gitproj) pickGitProject(d.gitproj);
     else if (d.gitc) openGitWin('history', d.gitc);
@@ -1997,6 +2075,8 @@ function initGit() {
     else if (d.ghurl) api.invoke('shell:openGithub', d.ghurl);
   });
   if (!$('#gitProjDrop').hidden) closeGitDrop();
+  $('#gitBody').addEventListener('input', e => { if (e.target.id === 'nrName') newRepo(GIT.pid).name = e.target.value.trim(); });
+  $('#gitBody').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'nrUrl') { e.preventDefault(); connectRepo(); } });
   document.addEventListener('mousedown', e => {
     if (!$('#gitProjDrop').hidden && !e.target.closest('.gp-proj')) closeGitDrop();
     if (!$('#gitPanel').hidden && !e.target.closest('#gitPanel,#gitBtn')) closeGitPanel();

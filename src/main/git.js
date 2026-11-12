@@ -183,6 +183,24 @@ module.exports = function gitApi({ isProject, insideProject, whereFirst, identit
     return { files: parseNumstat(stat), patch: cap(patch) };
   }
 
+  /* connect a project to a GitHub repo the user just created on github.com:
+     git init if needed, add it as origin, push if there is anything to push */
+  const GH_URL = /^(https:\/\/github\.com\/[\w.-]+\/[\w.-]+?(\.git)?\/?|git@github\.com:[\w.-]+\/[\w.-]+?(\.git)?)$/i;
+  async function connect(p, url) {
+    check(p);
+    url = String(url || '').trim();
+    if (!GH_URL.test(url)) throw new Error('Bu bir GitHub depo adresi değil. Örnek: https://github.com/kullanici/depo');
+    const isRepo = !!(await gitSafe(p, ['rev-parse', '--git-dir'])).trim();
+    if (!isRepo) await git(p, ['init', '-b', 'main']);
+    const origin = (await gitSafe(p, ['remote', 'get-url', 'origin'])).trim();
+    if (origin) throw new Error('Bu projenin zaten bir origin bağlantısı var: ' + origin);
+    await git(p, ['remote', 'add', 'origin', url.replace(/\/$/, '')]);
+    const hasCommit = !!(await gitSafe(p, ['rev-parse', '--verify', '--quiet', 'HEAD'])).trim();
+    if (!hasCommit) return { initialized: !isRepo, pushed: false };
+    await git(p, ['push', '--quiet', '-u', 'origin', 'HEAD'], NET);
+    return { initialized: !isRepo, pushed: true };
+  }
+
   /* ---------- GitHub ---------- */
   const ghCache = new Map();
   let ghCli = null;
@@ -233,5 +251,5 @@ module.exports = function gitApi({ isProject, insideProject, whereFirst, identit
     return v;
   }
 
-  return { head, sync, overview, log, show, diff, stash, github };
+  return { head, sync, connect, overview, log, show, diff, stash, github };
 };

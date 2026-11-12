@@ -960,6 +960,7 @@ function registerIpc() {
     insideProject, whereFirst, identity: () => config.identity,
   });
   ipcMain.handle('git:head', (_e, p) => G.head(p));
+  ipcMain.handle('git:connect', (_e, p, url) => G.connect(p, url));
   ipcMain.handle('git:sync', (_e, p, action) => G.sync(p, action));
   ipcMain.handle('git:overview', (_e, p) => G.overview(p));
   ipcMain.handle('git:log', (_e, p, skip, n) => G.log(p, skip, n));
