@@ -1,29 +1,12 @@
-// Writes build/icon.png (256x256) — the same three-bar mark the app draws at runtime.
+// Writes build/icon.png (256x256) from the same logo the app draws at runtime (src/main/logo.js).
 // electron-builder turns it into the Windows .ico.
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const { rasterize } = require('../src/main/logo');
 
 const S = 256;
-const px = Buffer.alloc(S * S * 4); // RGBA, transparent
-const bars = [
-  { x0: 0.06, y0: 0.10, x1: 0.94, y1: 0.32, c: [167, 139, 250] },
-  { x0: 0.06, y0: 0.40, x1: 0.72, y1: 0.62, c: [139, 116, 214] },
-  { x0: 0.06, y0: 0.70, x1: 0.50, y1: 0.92, c: [242, 177, 85] },
-];
-const r = Math.round(S * 0.07);
-for (const b of bars) {
-  const X0 = Math.round(b.x0 * S), X1 = Math.round(b.x1 * S), Y0 = Math.round(b.y0 * S), Y1 = Math.round(b.y1 * S);
-  for (let y = Y0; y < Y1; y++) for (let x = X0; x < X1; x++) {
-    const cx = x < X0 + r ? X0 + r : x >= X1 - r ? X1 - r - 1 : x;
-    const cy = y < Y0 + r ? Y0 + r : y >= Y1 - r ? Y1 - r - 1 : y;
-    const d = Math.hypot(x - cx, y - cy);
-    if (d > r + 0.5) continue;
-    const a = d > r - 0.5 ? Math.round(255 * (r + 0.5 - d)) : 255; // soft edge
-    const i = (y * S + x) * 4;
-    px[i] = b.c[0]; px[i + 1] = b.c[1]; px[i + 2] = b.c[2]; px[i + 3] = a;
-  }
-}
+const px = rasterize(S); // RGBA
 
 // minimal PNG encoder
 const crcTable = new Int32Array(256).map((_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c; });
