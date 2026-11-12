@@ -1087,6 +1087,8 @@ function registerIpc() {
   });
   // quick open, project search, rename / new folder / Recycle Bin, git colours, folder watcher
   require('./ide')({ ipcMain, shell, insideProject, send, isProjectRoot: p => config.projects.some(pr => norm(pr.path) === norm(p)) });
+  // DB mode: connections, explorer, queries (closes its connections on quit)
+  require('./db')({ ipcMain, app, dialog, getWin: () => win, DATA });
 }
 function addProject(p, auto) {
   const full = path.resolve(p);
