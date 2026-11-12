@@ -317,21 +317,24 @@ kbd{font:10.5px var(--f-mono);opacity:.75;margin-left:4px}
 .ptab.new{color:var(--accent)}
 .ptab.caret{padding:5px 6px;font-size:10px}
 
-/* CodeMirror theme from tokens */
+/* CodeMirror theme from tokens. Keywords follow the accent; mono has a white accent,
+   so it gets its own code colours (the UI stays black and white, the code does not) */
+:root{--syn-kw:var(--accent);--syn-prop:color-mix(in srgb,var(--accent) 55%,var(--fg))}
+:root[data-skin="mono"]{--syn-kw:#7fb0ff;--syn-prop:#8fd3dc}
 .cm-s-claudelot .CodeMirror-gutters{background:var(--surface-2);border-right:1px solid var(--line)}
 .cm-s-claudelot .CodeMirror-linenumber{color:var(--muted);opacity:.75}
 .cm-s-claudelot .CodeMirror-cursor{border-left:2px solid var(--accent)}
 .cm-s-claudelot .CodeMirror-activeline-background{background:color-mix(in srgb,var(--fg) 4%,transparent)}
 .cm-s-claudelot .CodeMirror-selected,.cm-s-claudelot.CodeMirror-focused .CodeMirror-selected{background:color-mix(in srgb,var(--accent) 28%,transparent)}
 .cm-s-claudelot .CodeMirror-matchingbracket{color:var(--warn)!important;text-decoration:underline}
-.cm-s-claudelot .cm-keyword,.cm-s-claudelot .cm-def{color:var(--accent)}
+.cm-s-claudelot .cm-keyword,.cm-s-claudelot .cm-def{color:var(--syn-kw)}
 .cm-s-claudelot .cm-string,.cm-s-claudelot .cm-string-2{color:var(--ok)}
 .cm-s-claudelot .cm-comment{color:var(--muted);font-style:italic}
 .cm-s-claudelot .cm-number,.cm-s-claudelot .cm-atom{color:var(--warn)}
 .cm-s-claudelot .cm-variable-2,.cm-s-claudelot .cm-variable-3,.cm-s-claudelot .cm-type{color:var(--violet)}
-.cm-s-claudelot .cm-property,.cm-s-claudelot .cm-attribute{color:color-mix(in srgb,var(--accent) 55%,var(--fg))}
+.cm-s-claudelot .cm-property,.cm-s-claudelot .cm-attribute{color:var(--syn-prop)}
 .cm-s-claudelot .cm-tag{color:var(--danger)}
-.cm-s-claudelot .cm-header{color:var(--accent);font-weight:600}
+.cm-s-claudelot .cm-header{color:var(--syn-kw);font-weight:600}
 .cm-s-claudelot .cm-operator,.cm-s-claudelot .cm-meta{color:var(--muted)}
 .cm-s-claudelot .cm-builtin{color:var(--violet)}
 .cm-search-hit{background:color-mix(in srgb,var(--warn) 35%,transparent)}
@@ -544,7 +547,7 @@ kbd{font:10.5px var(--f-mono);opacity:.75;margin-left:4px}
 .mi.hist span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:170px}
 
 /* markdown source colours */
-.cm-s-claudelot.is-md .cm-header{color:var(--accent);font-weight:700}
+.cm-s-claudelot.is-md .cm-header{color:var(--syn-kw);font-weight:700}
 .cm-s-claudelot.is-md .cm-header-1{font-size:1.25em}
 .cm-s-claudelot.is-md .cm-header-2{font-size:1.12em}
 .cm-s-claudelot.is-md .cm-strong{color:var(--fg);font-weight:700}
