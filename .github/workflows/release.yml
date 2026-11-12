@@ -1,0 +1,50 @@
+# Pushing a tag like v0.2.0 builds Claudelot on Windows and publishes a GitHub release
+# with the installers, the app.asar and claudelot-update.json (used by the in-app updater).
+# The tag must match "version" in package.json:  npm version minor && git push --follow-tags
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Tag matches package.json
+        shell: bash
+        run: |
+          v="v$(node -p "require('./package.json').version")"
+          if [ "$v" != "$GITHUB_REF_NAME" ]; then echo "package.json $v != tag $GITHUB_REF_NAME"; exit 1; fi
+
+      - run: npm ci
+
+      - name: Build
+        run: |
+          node scripts/make-icon.js
+          npx electron-builder --win --publish never
+
+      - name: Update manifest
+        run: node scripts/update-manifest.js
+
+      - name: Publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" --title "Claudelot $v" --generate-notes \
+            "dist/Claudelot-Setup-$v.exe" \
+            "dist/Claudelot-Portable-$v.exe" \
+            "dist/claudelot-app-$v.asar" \
+            "dist/claudelot-update.json"

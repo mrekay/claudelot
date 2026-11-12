@@ -43,6 +43,7 @@ const DEFAULTS = {
   settings: {
     name: '', tone: 'samimi', // name: filled from git / GitHub on first launch, else no form of address lang: 'tr', extra: '',
     closeToTray: true, autostart: false, sound: true, welcome: true,
+    update: { check: true, auto: true }, // look for new releases on GitHub; download and install them
     soundStyle: 'claudelot', // 'claudelot': the app plays its own chime · 'windows': the system notification sound
     // defaults for every Claude session Claudelot starts ('' = leave it to Claude Code)
     claude: { model: '', effort: '', permissionMode: '', remoteControl: false },
@@ -776,6 +777,22 @@ function spawnTerminal(opts) {
   ptys.set(id, p);
   return { id, sessionId };
 }
+/* ---------------- updates (GitHub Releases) ---------------- */
+let U = null;
+function setupUpdater() {
+  const { net } = require('electron');
+  U = require('./updater')({
+    app, net, DATA,
+    settings: () => Object.assign({ check: true, auto: true }, config.settings.update || {}),
+    notify: (title, body) => { try { new Notification({ title, body, icon: appIcon(64, 1), silent: true }).show(); } catch (_) {} },
+    onState: st => send('update:state', st),
+    beforeRestart: () => { isQuitting = true; killAll(); saveConfigNow(); app.quit(); },
+  });
+  ipcMain.handle('update:state', () => U.state());
+  ipcMain.handle('update:check', () => U.check({ quiet: true }));
+  ipcMain.handle('update:download', () => U.download());
+  ipcMain.handle('update:restart', () => U.restart());
+}
 function killAll() {
   for (const id of [...mirrors.keys()]) stopMirror(id);
   for (const p of ptys.values()) { try { p.kill(); } catch (_) {} }
@@ -1066,7 +1083,7 @@ function addProject(p, auto) {
 
 /* ---------------- start ---------------- */
 app.on('second-instance', () => showWindow());
-app.on('before-quit', () => { isQuitting = true; killAll(); saveConfigNow(); });
+app.on('before-quit', () => { isQuitting = true; killAll(); saveConfigNow(); if (U) U.onQuit(); });
 app.on('window-all-closed', e => e.preventDefault());
 
 app.whenReady().then(async () => {
@@ -1079,9 +1096,11 @@ app.whenReady().then(async () => {
   await syncDiscovered().catch(() => {});
   setInterval(() => syncDiscovered().catch(() => {}), 10 * 60 * 1000);
   registerIpc();
+  setupUpdater();
   if (firstRun || !config.identity) await detectIdentity({ firstLaunch: firstRun }).catch(() => {});
   computeUsage().catch(() => {});
   createWindow();
   createTray();
+  U.start();
   watchLive();
 });

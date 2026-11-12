@@ -1156,6 +1156,58 @@ const TONES = { samimi: 'Samimi', resmi: 'Resmi', kisa: 'Kısa ve öz' };
 const LANGS = { tr: 'Türkçe', en: 'İngilizce' };
 const NOTIF_LABELS = { done: 'İş bittiğinde', decision: 'Kararını beklediğinde (izin, plan, soru)', subagent: 'Alt ajan açılınca / bitince', workflow: 'Workflow açılınca / bitince', quiet: 'Rahatsız etme (hepsini sustur)' };
 const sw = (attr, on, label) => `<button class="sw" role="switch" aria-checked="${!!on}" aria-label="${esc(label)}" ${attr}></button>`;
+/* ---------------- updates ---------------- */
+let UPD = null;
+const UPD_KIND = { nsis: 'Kurulum (Setup)', portable: 'Taşınabilir (Portable)', asar: 'Klasör (win-unpacked)', dev: 'Geliştirme modu' };
+function updateHTML() {
+  const u = UPD || { status: 'idle', current: '', kind: '' };
+  const up = Object.assign({ check: true, auto: true }, CFG.settings.update || {});
+  const pct = Math.round((u.progress || 0) * 100);
+  const ago = ms => (rel(ms) === 'şimdi' ? 'az önce' : rel(ms) + ' önce');
+  const line = {
+    idle: u.reason ? esc(u.reason) : 'Henüz denetlenmedi.',
+    checking: '<i class="fa-solid fa-circle-notch fa-spin"></i> Denetleniyor…',
+    none: `<i class="fa-solid fa-circle-check" style="color:var(--ok)"></i> Güncel${u.checkedAt ? ` · son denetim ${ago(u.checkedAt)}` : ''}`,
+    available: `<b>${esc(u.latest)}</b> sürümü var.`,
+    downloading: `<b>${esc(u.latest)}</b> indiriliyor… %${pct}<span class="upd-bar"><i style="width:${pct}%"></i></span>`,
+    ready: `<b>${esc(u.latest)}</b> indirildi ve doğrulandı. Yeniden başlatınca kurulur${up.auto ? '; çıkışta da kendiliğinden kurulur' : ''}.`,
+    manual: `<b>${esc(u.latest)}</b> sürümü var. ${esc(u.reason)}`,
+    error: `<i class="fa-solid fa-triangle-exclamation" style="color:var(--warn)"></i> ${esc(u.error)}`,
+  }[u.status] || '';
+  const btns = [];
+  if (u.status === 'ready') btns.push('<button class="btn primary" data-updgo><i class="fa-solid fa-rotate"></i> Yeniden başlat ve güncelle</button>');
+  if (u.status === 'available') btns.push('<button class="btn primary" data-upddl><i class="fa-solid fa-download"></i> İndir</button>');
+  if (['manual', 'available', 'ready'].includes(u.status) && u.url) btns.push('<button class="btn" data-updpage><i class="fa-brands fa-github"></i> Sürüm sayfası</button>');
+  if (u.kind && u.kind !== 'dev' && u.status !== 'checking' && u.status !== 'downloading') btns.push('<button class="btn" data-updcheck><i class="fa-solid fa-arrows-rotate"></i> Güncellemeleri denetle</button>');
+  return `<h4>Sürüm</h4>
+    <div class="upd"><div class="upd-top"><b>Claudelot ${esc(u.current)}</b><span>${esc(UPD_KIND[u.kind] || '')}</span></div>
+      <div class="upd-line">${line}</div>${btns.length ? `<div class="upd-btns">${btns.join('')}</div>` : ''}
+      ${u.notes && u.status !== 'none' ? `<details class="upd-notes"><summary>${esc(u.latest)} sürümündeki yenilikler</summary><pre>${esc(u.notes)}</pre></details>` : ''}</div>
+    <div class="set-row"><span>Güncellemeleri kendiliğinden denetle<small>Açılışta ve 6 saatte bir GitHub'daki sürümlere bakar</small></span>${sw('data-upd="check"', up.check, 'Güncellemeleri denetle')}</div>
+    <div class="set-row"><span>Kendiliğinden indir ve çıkışta kur<small>Kapalıysa yalnızca haber verir</small></span>${sw('data-upd="auto"', up.auto, 'Kendiliğinden indir')}</div>`;
+}
+function renderUpdBtn() {
+  const b = $('#updBtn'); if (!b || !UPD) return;
+  b.hidden = !['ready', 'available', 'manual', 'downloading'].includes(UPD.status);
+  b.classList.toggle('ready', UPD.status === 'ready');
+  b.title = UPD.status === 'ready' ? `Claudelot ${UPD.latest} hazır: yeniden başlatınca kurulur`
+    : UPD.status === 'downloading' ? `Claudelot ${UPD.latest} indiriliyor (%${Math.round(UPD.progress * 100)})` : `Claudelot ${UPD.latest} çıktı`;
+}
+async function updateAction(d) {
+  if (d.upd) { setCfg({ settings: { update: { [d.upd]: !Object.assign({ check: true, auto: true }, CFG.settings.update || {})[d.upd] } } }).then(renderSettings); return; }
+  if (d.updcheck !== undefined) { UPD = await api.invoke('update:check'); }
+  else if (d.upddl !== undefined) { api.invoke('update:download'); return; }
+  else if (d.updpage !== undefined) { if (UPD && UPD.url) api.invoke('shell:openGithub', UPD.url); return; }
+  else if (d.updgo !== undefined) {
+    const open = S.tabs.filter(t => !t.exited && t.kind !== 'watch').length;
+    if (open && !confirm(`${open} terminal kapanacak. Claude oturumları yeni sürüm açılınca geri yüklenir.\n\nYeniden başlatıp güncellensin mi?`)) return;
+    if (!(await api.invoke('update:restart'))) toast('Güncelleme başlatılamadı');
+    return;
+  }
+  renderUpdBtn(); renderSettings();
+}
+api.on('update:state', st => { UPD = st; renderUpdBtn(); if (!$('#settings').hidden && setTab === 'hakkinda') renderSettings(); });
+
 let CLEANUP = null; // ~/.claude/settings.json cleanupPeriodDays (null = Claude Code's default, 30)
 function openSettings(tab) {
   if (tab) setTab = tab; $('#settings').hidden = false; closeMenus(); renderSettings();
@@ -1214,7 +1266,7 @@ function renderSettings() {
       + `<div class="set-row"><span>Windows açılınca başlat<small>Doğrudan sistem tepsisine başlar</small></span>${sw('data-set="autostart"', st.autostart, 'Windows ile başlat')}</div>`
       + '<p class="set-note">Uygulamadan tamamen çıkmak için: sistem tepsisindeki simgeye sağ tıkla → Çık.</p>';
   } else {
-    h = setTab === 'kisayol' ? kisayolHTML() : `<h4>Bağlantı</h4><div class="kv">
+    h = setTab === 'kisayol' ? kisayolHTML() : updateHTML() + `<h4>Bağlantı</h4><div class="kv">
       <span>Claude Code</span><span>${INFO.claude ? `<code>${esc(INFO.claude)}</code>` : '<b style="color:var(--warn)">Bulunamadı.</b> Claude Code kurulu ve PATH içinde olmalı.'}</span>
       <span>Bildirim portu</span><span><code>127.0.0.1:${INFO.hookPort}</code></span>
       <span>Hook ayarları</span><span><code>${esc(INFO.hookSettings)}</code></span>
@@ -1360,7 +1412,8 @@ function bindEvents() {
     if (files.length) t.term.paste(files.map(f => (/\s/.test(f) ? `"${f}"` : f)).join(' '));
   }, true);
   document.addEventListener('click', async e => {
-    const b = e.target.closest('[data-ceffort],[data-cpm],[data-cset],[data-cleanup]'); if (!b) return;
+    const b = e.target.closest('[data-ceffort],[data-cpm],[data-cset],[data-cleanup],[data-upd],[data-updcheck],[data-upddl],[data-updgo],[data-updpage]'); if (!b) return;
+    if (b.closest('#setBody') && ('upd' in b.dataset || 'updcheck' in b.dataset || 'upddl' in b.dataset || 'updgo' in b.dataset || 'updpage' in b.dataset)) { updateAction(b.dataset); return; }
     const c = CFG.settings.claude || {};
     if (b.dataset.cleanup) {
       try { CLEANUP = await api.invoke('claude:setCleanup', Number(b.dataset.cleanup)); renderSettings(); toast('Oturum geçmişi', `Claude Code artık ${CLEANUP} günden eski oturumları siler.`); }
@@ -1407,6 +1460,8 @@ function bindEvents() {
   api.on('open-project', async () => handleOpen(await api.invoke('app:takePendingOpen')));
   api.on('projects-changed', async list => { S.projects = list; CFG.projects = list; await refreshAllHistory(); renderAll(); });
   api.on('config-changed', c => { CFG = c; renderSettings(); });
+  $('#updBtn').onclick = () => openSettings('hakkinda');
+  api.invoke('update:state').then(st => { UPD = st; renderUpdBtn(); }).catch(() => {});
   api.on('address-learned', n => toast('Hitap güncellendi', n ? `Bundan sonra “${n}” diye hitap edilecek.` : 'Bundan sonra hitap kullanılmayacak.'));
   window.addEventListener('beforeunload', e => {
     if (Object.keys(IDE.files).some(isDirty)) { e.returnValue = false; }
