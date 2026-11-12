@@ -22,7 +22,10 @@
     "@xterm/xterm": "^6.0.0",
     "codemirror": "^5.65.21",
     "dompurify": "^3.4.17",
-    "marked": "^18.2.0"
+    "marked": "^18.2.0",
+    "mssql": "^12.7.14",
+    "mysql2": "^3.24.6",
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "electron": "^45.3.0",
@@ -37,7 +40,11 @@
     },
     "files": [
       "src/**",
-      "package.json"
+      "package.json",
+      "!**/node_modules/**/*.{map,d.ts,d.mts,d.cts}",
+      "!**/node_modules/@azure/msal-browser/**",
+      "!**/node_modules/@azure/*/dist/{browser,react-native,workerd}/**",
+      "!**/node_modules/@typespec/*/dist/{browser,react-native}/**"
     ],
     "asarUnpack": [
       "node_modules/@lydell/**"
