@@ -5,7 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const root = path.join(__dirname, '..');
-const dist = path.join(root, 'dist');
+const dist = path.resolve(process.argv[2] || path.join(root, 'dist')); // build output folder (default: dist)
 const { version } = require(path.join(root, 'package.json'));
 const electron = require(path.join(root, 'node_modules', 'electron', 'package.json')).version;
 
