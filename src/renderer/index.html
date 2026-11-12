@@ -79,18 +79,21 @@
   <div class="ide" id="ideView" hidden>
     <div class="itool" id="itool" role="toolbar" aria-label="IDE araç çubuğu">
       <div class="tg">
-        <button class="tb" data-tb="new" title="Yeni dosya"><i class="fa-solid fa-file-circle-plus"></i><span>Yeni</span></button>
+        <button class="tb" data-tb="new" title="Projede yeni dosya (gezginde sağ tıkla: klasöre ekle)"><i class="fa-solid fa-file-circle-plus"></i><span>Yeni</span></button>
         <button class="tb" data-tb="save" id="tbSave" title="Kaydet (Ctrl+S)"><i class="fa-solid fa-floppy-disk"></i><span>Kaydet</span></button>
         <button class="tb" data-tb="saveall" id="tbSaveAll" title="Bu projedeki tüm dosyaları kaydet"><i class="fa-solid fa-copy"></i><span>Tümünü kaydet</span></button>
       </div>
-      <form class="newfile" id="newFileForm" hidden><input id="newFileIn" placeholder="src/yeni-dosya.ts" aria-label="Yeni dosya yolu"><button class="btn primary">Oluştur</button></form>
       <div class="tg">
         <button class="tb" data-tb="undo" title="Geri al (Ctrl+Z)" aria-label="Geri al"><i class="fa-solid fa-rotate-left"></i></button>
         <button class="tb" data-tb="redo" title="Yinele (Ctrl+Y)" aria-label="Yinele"><i class="fa-solid fa-rotate-right"></i></button>
       </div>
-      <div class="tg find"><i class="fa-solid fa-magnifying-glass"></i><input id="findIn" placeholder="Dosyada ara (Enter)" aria-label="Dosyada ara"><span id="findN"></span></div>
+      <div class="tg find"><i class="fa-solid fa-magnifying-glass"></i><input id="findIn" placeholder="Dosyada ara (Ctrl+F)" title="Enter: sonraki · Shift+Enter: önceki" aria-label="Dosyada ara"><span id="findN"></span></div>
       <div class="tg">
         <button class="tb" data-tb="smaller" title="Yazıyı küçült" aria-label="Yazıyı küçült">A−</button><span class="tb-size" id="tbSize"></span><button class="tb" data-tb="bigger" title="Yazıyı büyüt" aria-label="Yazıyı büyüt">A+</button>
+      </div>
+      <div class="tg">
+        <button class="tb" data-tb="quick" title="Dosyaya git (Ctrl+P)"><i class="fa-solid fa-bolt"></i><span>Dosyaya git</span></button>
+        <button class="tb" data-tb="psearch" title="Projede ara (Ctrl+Shift+F)"><i class="fa-solid fa-magnifying-glass-arrow-right"></i><span>Projede ara</span></button>
       </div>
       <div class="tg" style="margin-left:auto">
         <button class="tb" data-tb="ex" id="tbEx" title="Dosya gezginini göster / gizle (Ctrl+Shift+E)"><i class="fa-solid fa-table-columns"></i><span>Gezgin</span></button>
@@ -101,18 +104,41 @@
     <aside class="explorer" aria-label="Dosya gezgini">
       <div class="panel-h">Projeler</div>
       <div class="ex-proj" id="exProj"><select id="ideProjSel" aria-label="Proje"></select><div class="ex-path" id="ideProjPath"></div></div>
-      <div class="panel-h ex-files-h">Dosyalar <button class="ghost icon" id="refreshTree" title="Yenile" aria-label="Dosya listesini yenile"><i class="fa-solid fa-arrows-rotate"></i></button></div>
-      <div class="tree" id="tree"></div>
+      <div class="ex-bar">
+        <div class="ex-views" role="tablist" aria-label="Gezgin görünümü"><button role="tab" data-exview="files" class="on" aria-selected="true"><i class="fa-regular fa-folder"></i>Dosyalar</button><button role="tab" data-exview="search" aria-selected="false" title="Projede ara (Ctrl+Shift+F)"><i class="fa-solid fa-magnifying-glass"></i>Ara</button></div>
+        <span class="ex-acts" id="exFileActs"><button class="ghost icon" id="exNewFile" title="Yeni dosya" aria-label="Yeni dosya"><i class="fa-solid fa-file-circle-plus"></i></button><button class="ghost icon" id="exNewDir" title="Yeni klasör" aria-label="Yeni klasör"><i class="fa-solid fa-folder-plus"></i></button><button class="ghost icon" id="exCollapse" title="Tümünü daralt" aria-label="Tüm klasörleri daralt"><i class="fa-solid fa-angles-up"></i></button><button class="ghost icon" id="refreshTree" title="Yenile" aria-label="Dosya listesini yenile"><i class="fa-solid fa-arrows-rotate"></i></button></span>
+      </div>
+      <div class="tree" id="tree" role="tree" aria-label="Dosyalar"></div>
+      <div class="psearch" id="psearch" hidden>
+        <div class="ps-box"><i class="fa-solid fa-magnifying-glass"></i><input id="psIn" placeholder="Projede ara" autocomplete="off" spellcheck="false" aria-label="Projede ara"><span class="ps-opts"><button class="ps-opt" data-psopt="case" title="Büyük / küçük harfe duyarlı" aria-label="Büyük / küçük harfe duyarlı" aria-pressed="false">Aa</button><button class="ps-opt" data-psopt="word" title="Yalnızca tam sözcük" aria-label="Yalnızca tam sözcük" aria-pressed="false"><u>ab</u></button><button class="ps-opt" data-psopt="regex" title="Düzenli ifade (regex)" aria-label="Düzenli ifade" aria-pressed="false">.*</button></span></div>
+        <div class="ps-sum" id="psSum" aria-live="polite"></div>
+        <div class="ps-res" id="psRes"></div>
+      </div>
     </aside>
     <main class="editor">
-      <div class="etabs" id="etabs"></div>
+      <div class="etabs" id="etabs" role="tablist" aria-label="Açık dosyalar"></div>
       <div class="crumb" id="crumb"></div>
-      <div class="code" id="code"><div class="empty-note" id="codeEmpty">Soldaki dosyalardan birini aç.</div><article class="md-view" id="mdView" hidden></article></div>
+      <div class="disk-bar" id="diskBar" role="alert" hidden></div>
+      <div class="code" id="code">
+        <div class="empty-note" id="codeEmpty"><div class="en-box"><i class="fa-regular fa-file-code en-ic"></i><b>Açık dosya yok</b><span>Soldaki gezginden bir dosya seç ya da:</span>
+          <dl class="en-keys"><dt>Dosyaya git</dt><dd><kbd>Ctrl</kbd><kbd>P</kbd></dd><dt>Projede ara</dt><dd><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>F</kbd></dd><dt>Gezgini aç / kapat</dt><dd><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>E</kbd></dd><dt>Yeni dosya, klasör</dt><dd>gezginde sağ tık</dd></dl></div></div>
+        <article class="md-view" id="mdView" hidden></article>
+        <div class="img-view" id="imgView" hidden></div>
+      </div>
+      <div class="ed-status" id="edStatus" hidden></div>
       <section class="bpanel" id="bpanel">
         <div class="ptabs" id="ptabs"></div>
         <div class="term-slot" id="ideSlot"></div>
       </section>
     </main>
+    <div class="qo-bg" id="qoBg" hidden>
+      <div class="qo" role="dialog" aria-modal="true" aria-labelledby="qoTitle">
+        <div class="qo-title" id="qoTitle" hidden></div>
+        <div class="qo-in"><i class="fa-solid fa-magnifying-glass"></i><input id="qoIn" autocomplete="off" spellcheck="false" aria-controls="qoList"></div>
+        <div class="qo-list" id="qoList" role="listbox"></div>
+        <div class="qo-foot" id="qoFoot"></div>
+      </div>
+    </div>
   </div>
 
   <div class="statusbar" id="statusbar"></div>
@@ -136,6 +162,7 @@
   </div>
   <div class="skin-menu" id="skinMenu" role="menu" hidden></div>
   <div class="new-menu" id="newMenu" role="menu" hidden></div>
+  <div class="new-menu ide-menu" id="ideMenu" role="menu" hidden></div>
   <div class="popover" id="pop" hidden>
     <div class="pop-h">Bildirimler <span><button class="ghost" id="notifSettings">Ayarlar</button><button class="ghost" id="clearN">Temizle</button></span></div>
     <div class="nlist" id="nlist"></div>

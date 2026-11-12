@@ -738,7 +738,11 @@ function renderAll() {
 }
 
 /* ---------------- IDE mode ---------------- */
-const IDE = { project: null, files: {}, dirCache: {}, expanded: {}, cm: null, state: {}, ui: { ex: true, panel: true, size: 13 }, mdView: new Set() };
+const IDE = {
+  project: null, files: {}, dirCache: {}, expanded: {}, cm: null, state: {}, ui: { ex: true, panel: true, size: 13, wrap: false }, mdView: new Set(),
+  view: 'files', git: { repo: false, files: {}, dirs: new Set(), branch: '' }, index: {}, watched: null, reveal: null, menu: null,
+  search: { q: '', case: false, word: false, regex: false, res: null, busy: false, closed: new Set(), token: 0 },
+};
 const MODES = {
   js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'jsx', ts: 'text/typescript', tsx: 'text/typescript-jsx', json: 'application/json',
   css: 'css', scss: 'text/x-scss', less: 'text/x-less', html: 'htmlmixed', htm: 'htmlmixed', xml: 'xml', svg: 'xml', vue: 'htmlmixed',
@@ -746,8 +750,32 @@ const MODES = {
   cs: 'text/x-csharp', java: 'text/x-java', kt: 'text/x-kotlin', dart: 'text/x-java', sh: 'shell', bash: 'shell', ps1: 'powershell', psm1: 'powershell',
   yml: 'yaml', yaml: 'yaml', sql: 'sql', toml: 'toml', dockerfile: 'dockerfile', gd: 'python',
 };
+const LANG_NAMES = {
+  javascript: 'JavaScript', jsx: 'JSX', 'text/typescript': 'TypeScript', 'text/typescript-jsx': 'TSX', 'application/json': 'JSON', css: 'CSS', 'text/x-scss': 'SCSS',
+  'text/x-less': 'Less', htmlmixed: 'HTML', xml: 'XML', markdown: 'Markdown', python: 'Python', go: 'Go', rust: 'Rust', 'text/x-csrc': 'C', 'text/x-c++src': 'C++',
+  'text/x-csharp': 'C#', 'text/x-java': 'Java', 'text/x-kotlin': 'Kotlin', shell: 'Shell', powershell: 'PowerShell', yaml: 'YAML', sql: 'SQL', toml: 'TOML', dockerfile: 'Dockerfile',
+};
 const extOf = p => { const b = p.split(/[\\/]/).pop().toLowerCase(); return b === 'dockerfile' ? 'dockerfile' : (b.includes('.') ? b.split('.').pop() : ''); };
 const baseName = p => p.split(/[\\/]/).pop();
+const langName = fp => ({ dart: 'Dart', gd: 'GDScript', svg: 'SVG', vue: 'Vue' })[extOf(fp)] || LANG_NAMES[MODES[extOf(fp)]] || 'Düz metin';
+const isImage = fp => /\.(png|jpe?g|gif|webp|bmp|ico|avif)$/i.test(fp);
+const dirOf = fp => fp.slice(0, Math.max(fp.lastIndexOf('\\'), fp.lastIndexOf('/')));
+const joinP = (dir, name) => dir.replace(/[\\/]+$/, '') + '\\' + name;
+const projRoot = () => { const p = proj(IDE.project); return p ? p.path.replace(/[\\/]+$/, '') : ''; };
+const relOf = fp => { const r = projRoot(); return r && normPath(fp).startsWith(normPath(r) + '\\') ? fp.slice(r.length + 1) : fp; };
+const under = (fp, base) => { const a = normPath(fp), b = normPath(base); return a === b || a.startsWith(b + '\\'); };
+const fileUrl = fp => 'file:///' + fp.replace(/\\/g, '/').split('/').map((s, i) => (i === 0 && /^[a-z]:$/i.test(s) ? s : encodeURIComponent(s))).join('/');
+const fmtSize = n => (n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toLocaleString('tr-TR', { maximumFractionDigits: 1 }) + ' KB' : (n / 1048576).toLocaleString('tr-TR', { maximumFractionDigits: 1 }) + ' MB');
+const BAD_NAME = /[<>:"|?*\x00-\x1f]/;
+function nameError(v, allowSub) {
+  const s = v.trim();
+  if (!s) return 'Bir ad yaz.';
+  if (BAD_NAME.test(s)) return 'Ad şu karakterleri içeremez: < > : " | ? *';
+  if (!allowSub && /[\\/]/.test(s)) return 'Ad \\ ya da / içeremez.';
+  if (s.split(/[\\/]/).some(x => x === '..' || x === '.')) return '"." ve ".." kullanılamaz.';
+  if (/[. ]$/.test(s)) return 'Ad nokta ya da boşlukla bitemez.';
+  return '';
+}
 /* file icons (Font Awesome): [icon class, colour] per extension */
 const FILE_TYPES = {
   js: ['fa-brands fa-js', '#e5c04a'], mjs: ['fa-brands fa-js', '#e5c04a'], cjs: ['fa-brands fa-js', '#e5c04a'], jsx: ['fa-brands fa-react', '#38bdf8'],
@@ -766,7 +794,7 @@ const FILE_TYPES = {
   xlsx: ['fa-solid fa-file-excel', '#3fae6a'], xls: ['fa-solid fa-file-excel', '#3fae6a'], csv: ['fa-solid fa-file-csv', '#3fae6a'],
   docx: ['fa-solid fa-file-word', '#4b84e0'], doc: ['fa-solid fa-file-word', '#4b84e0'], pptx: ['fa-solid fa-file-powerpoint', '#e0703f'], pdf: ['fa-solid fa-file-pdf', '#e05555'],
   png: ['fa-solid fa-file-image', '#3fbfa0'], jpg: ['fa-solid fa-file-image', '#3fbfa0'], jpeg: ['fa-solid fa-file-image', '#3fbfa0'], gif: ['fa-solid fa-file-image', '#3fbfa0'],
-  webp: ['fa-solid fa-file-image', '#3fbfa0'], ico: ['fa-solid fa-file-image', '#3fbfa0'],
+  webp: ['fa-solid fa-file-image', '#3fbfa0'], ico: ['fa-solid fa-file-image', '#3fbfa0'], bmp: ['fa-solid fa-file-image', '#3fbfa0'], avif: ['fa-solid fa-file-image', '#3fbfa0'],
   txt: ['fa-solid fa-file-lines', '#9aa3ad'], log: ['fa-solid fa-file-lines', '#9aa3ad'], lock: ['fa-solid fa-lock', '#8a8f98'],
   zip: ['fa-solid fa-file-zipper', '#b8925a'], rar: ['fa-solid fa-file-zipper', '#b8925a'], '7z': ['fa-solid fa-file-zipper', '#b8925a'],
   exe: ['fa-brands fa-windows', '#9aa3ad'], dll: ['fa-solid fa-gears', '#9aa3ad'], dockerfile: ['fa-brands fa-docker', '#3b9ce6'],
@@ -781,6 +809,10 @@ function fileIcon(name) {
 }
 const FOLDER = '<i class="fold fa-solid fa-folder" aria-hidden="true"></i>';
 const FOLDER_OPEN = '<i class="fold fa-solid fa-folder-open" aria-hidden="true"></i>';
+/* git status letters, as in most editors */
+const GIT_TITLE = { M: 'Değiştirildi', A: 'Eklendi (stage)', U: 'Yeni, git izlemiyor', D: 'Silindi', R: 'Yeniden adlandırıldı', C: 'Çakışma var' };
+const gitOf = fp => IDE.git.files[normPath(fp)] || '';
+
 /* ---------- markdown view ---------- */
 const isMarkdown = fp => /\.(md|markdown|mdx)$/i.test(fp);
 function resolveRel(fromFile, href) {
@@ -789,7 +821,7 @@ function resolveRel(fromFile, href) {
   return parts.join('\\');
 }
 function renderMarkdown(fp) {
-  const f = IDE.files[fp]; if (!f) return;
+  const f = IDE.files[fp]; if (!f || !f.doc) return;
   const el = $('#mdView');
   el.innerHTML = DOMPurify.sanitize(marked.parse(f.doc.getValue(), { gfm: true, breaks: false }));
   // local images: make paths relative to the markdown file
@@ -799,36 +831,60 @@ function renderMarkdown(fp) {
   });
   el.dataset.file = fp;
 }
+/* ---------- image preview ---------- */
+function renderImage(fp) {
+  const f = IDE.files[fp], el = $('#imgView');
+  if (!f) return;
+  const v = String(f.mtime || 0);
+  if (el.dataset.file === fp && el.dataset.v === v) return;
+  el.dataset.file = fp; el.dataset.v = v;
+  el.innerHTML = `<div class="iv-stage"><img alt="${esc(baseName(fp))}" src="${esc(fileUrl(fp))}?v=${esc(v)}"></div>`
+    + `<div class="iv-info"><b>${esc(baseName(fp))}</b><span class="iv-dim"></span><span>${fmtSize(f.size || 0)}</span></div>`;
+  const img = el.querySelector('img');
+  img.onload = () => { const d = el.querySelector('.iv-dim'); if (d) d.textContent = `${img.naturalWidth} × ${img.naturalHeight} piksel`; };
+  img.onerror = () => { const s = el.querySelector('.iv-stage'); if (s) s.innerHTML = '<div class="iv-err"><i class="fa-regular fa-image"></i>Bu görsel gösterilemedi.</div>'; };
+}
+
 const ist = () => IDE.state[IDE.project] || (IDE.state[IDE.project] = { tabs: [], file: null });
 let ideSaveTimer = null;
 function saveIdeState() { clearTimeout(ideSaveTimer); ideSaveTimer = setTimeout(() => api.invoke('config:setIdeState', IDE.state), 400); }
-const isDirty = fp => { const f = IDE.files[fp]; return !!f && !f.doc.isClean(f.gen); };
+const isDirty = fp => { const f = IDE.files[fp]; return !!f && !!f.doc && (!f.doc.isClean(f.gen) || f.eol !== f.eol0); };
+const splitBom = text => (text.charCodeAt(0) === 0xFEFF ? { text: text.slice(1), bom: true } : { text, bom: false });
 
 function setupEditor() {
   IDE.cm = CodeMirror($('#code'), {
     theme: 'claudelot', lineNumbers: true, matchBrackets: true, autoCloseBrackets: true, styleActiveLine: true,
-    indentUnit: 2, tabSize: 2, value: '',
+    indentUnit: 2, tabSize: 2, value: '', lineWrapping: !!IDE.ui.wrap,
     extraKeys: {
       'Ctrl-S': () => saveFile(),
-      'Ctrl-F': () => { $('#findIn').focus(); $('#findIn').select(); },
+      'Ctrl-F': () => { const sel = IDE.cm.somethingSelected() && IDE.cm.getSelection(); if (sel && !sel.includes('\n')) $('#findIn').value = sel; $('#findIn').focus(); $('#findIn').select(); },
       Tab: cm => (cm.somethingSelected() ? cm.indentSelection('add') : cm.replaceSelection('  ')),
       'Shift-Tab': cm => cm.indentSelection('subtract'),
     },
   });
   IDE.cm.getWrapperElement().hidden = true;
   IDE.cm.on('changes', () => renderEdChrome());
+  IDE.cm.on('cursorActivity', () => renderEdStatus());
 }
 async function ensureLoaded(fp) {
   if (IDE.files[fp]) return true;
+  if (isImage(fp)) {
+    let st; try { st = await api.invoke('fs:stat', fp); } catch (e) { st = { exists: false }; }
+    if (!st.exists) { toast('Dosya açılamadı', `${baseName(fp)}: bulunamadı`); return false; }
+    IDE.files[fp] = { image: true, size: st.size, mtime: st.mtime };
+    return true;
+  }
   let r;
   try { r = await api.invoke('fs:read', fp); } catch (e) { r = { error: cleanErr(e) }; }
   if (r.error) { toast('Dosya açılamadı', `${baseName(fp)}: ${r.error}`); return false; }
-  const eol = /\r\n/.test(r.text) ? '\r\n' : '\n';
-  const doc = CodeMirror.Doc(r.text, MODES[extOf(fp)] || null);
-  IDE.files[fp] = { doc, gen: doc.changeGeneration(true), eol };
+  const { text, bom } = splitBom(r.text);
+  const eol = /\r\n/.test(text) ? '\r\n' : '\n';
+  const doc = CodeMirror.Doc(text, MODES[extOf(fp)] || null);
+  IDE.files[fp] = { doc, gen: doc.changeGeneration(true), eol, eol0: eol, bom };
   return true;
 }
-async function openFile(fp) {
+/* at: { line (1-based), col, len } — jump there once the file is shown */
+async function openFile(fp, at) {
   const pid = IDE.project;
   const ok = await ensureLoaded(fp);
   const s = IDE.state[pid] || (IDE.state[pid] = { tabs: [], file: null });
@@ -840,7 +896,17 @@ async function openFile(fp) {
     s.file = fp;
   }
   saveIdeState();
-  if (pid === IDE.project) showFile();
+  if (pid === IDE.project) { showFile(); if (ok && at) gotoPos(at); }
+}
+function gotoPos({ line, col = 0, len = 0 }) {
+  const fp = ist().file, f = fp && IDE.files[fp];
+  if (!f || !f.doc) return;
+  if (IDE.mdView.has(fp)) { IDE.mdView.delete(fp); showFile(); }
+  const cm = IDE.cm;
+  const ln = Math.max(0, Math.min(cm.lineCount() - 1, (line | 0) - 1));
+  const from = CodeMirror.Pos(ln, col), to = CodeMirror.Pos(ln, col + len);
+  cm.setSelection(from, to);
+  requestAnimationFrame(() => { cm.refresh(); cm.scrollIntoView({ from, to }, Math.round(cm.getScrollInfo().clientHeight / 3)); cm.focus(); });
 }
 function showFile() {
   const fp = ist().file;
@@ -849,10 +915,14 @@ function showFile() {
   const w = IDE.cm.getWrapperElement();
   const md = !!fp && isMarkdown(fp);
   w.classList.toggle('is-md', md);
+  $('#imgView').hidden = !(f && f.image);
   if (!f) { w.hidden = true; $('#codeEmpty').hidden = false; $('#mdView').hidden = true; }
+  else if (f.image) { w.hidden = true; $('#codeEmpty').hidden = true; $('#mdView').hidden = true; renderImage(fp); }
   else {
     $('#codeEmpty').hidden = true; w.hidden = false;
     if (IDE.cm.getDoc() !== f.doc) IDE.cm.swapDoc(f.doc);
+    const mode = MODES[extOf(fp)] || null; // the file may have been renamed to another type
+    if (IDE.cm.getOption('mode') !== mode) IDE.cm.setOption('mode', mode);
     requestAnimationFrame(() => IDE.cm.refresh());
     const view = md && IDE.mdView.has(fp);
     $('#mdView').hidden = !view;
@@ -861,23 +931,58 @@ function showFile() {
   renderEdChrome();
   renderTree();
 }
-function closeFile(fp) {
-  if (isDirty(fp) && !confirm(`${baseName(fp)} dosyasında kaydedilmemiş değişiklikler var. Yine de kapatılsın mı?`)) return;
-  const s = ist();
-  s.tabs = s.tabs.filter(x => x !== fp);
-  if (s.file === fp) s.file = s.tabs[s.tabs.length - 1] || null;
-  if (!Object.values(IDE.state).some(st => st.tabs.includes(fp))) delete IDE.files[fp];
+/* close several editor tabs, asking once about unsaved work */
+function closeFiles(list) {
+  list = list.filter(Boolean);
+  if (!list.length) return false;
+  const dirty = list.filter(isDirty);
+  if (dirty.length && !confirm(dirty.length === 1
+    ? `${baseName(dirty[0])} dosyasında kaydedilmemiş değişiklikler var. Yine de kapatılsın mı?`
+    : `${dirty.length} dosyada kaydedilmemiş değişiklikler var:\n${dirty.map(baseName).join(', ')}\n\nYine de kapatılsın mı?`)) return false;
+  const s = ist(), drop = new Set(list);
+  const idx = s.tabs.indexOf(s.file);
+  s.tabs = s.tabs.filter(x => !drop.has(x));
+  if (drop.has(s.file)) s.file = s.tabs[Math.min(Math.max(idx, 0), s.tabs.length - 1)] || null; // the neighbour, not the last tab
+  for (const fp of list) if (!Object.values(IDE.state).some(st => st.tabs.includes(fp))) delete IDE.files[fp];
   saveIdeState(); showFile();
+  return true;
 }
+const closeFile = fp => closeFiles([fp]);
 async function saveFile(fp) {
   fp = fp || ist().file;
-  const f = fp && IDE.files[fp]; if (!f) return false;
+  const f = fp && IDE.files[fp]; if (!f || !f.doc) return false;
   let text = f.doc.getValue();
   if (f.eol === '\r\n') text = text.replace(/\n/g, '\r\n');
+  if (f.bom) text = '\uFEFF' + text;
   try { await api.invoke('fs:write', fp, text); } catch (e) { toast('Kaydedilemedi', cleanErr(e)); return false; }
   f.gen = f.doc.changeGeneration(true);
+  f.eol0 = f.eol; f.conflict = false; f.missing = false;
   renderEdChrome();
   return true;
+}
+/* bring an open file up to date with the disk. Unsaved edits are never overwritten
+   unless force is set: the file is marked as conflicting and a bar asks what to do. */
+async function reloadFromDisk(fp, force) {
+  const f = IDE.files[fp]; if (!f) return;
+  let st; try { st = await api.invoke('fs:stat', fp); } catch (_) { return; }
+  if (!st.exists) { if (!f.missing) { f.missing = true; renderEdChrome(); } return; }
+  f.missing = false;
+  if (f.image) { f.mtime = st.mtime; f.size = st.size; if (fp === ist().file && S.mode === 'ide') renderImage(fp); return; }
+  let r; try { r = await api.invoke('fs:read', fp); } catch (_) { return; }
+  if (r.error || !IDE.files[fp]) return;
+  const { text, bom } = splitBom(r.text);
+  const disk = text.replace(/\r\n/g, '\n');
+  if (disk === f.doc.getValue()) { f.conflict = false; return; } // e.g. our own save
+  if (isDirty(fp) && !force) { f.conflict = true; renderEdChrome(); return; }
+  const cm = IDE.cm, active = cm.getDoc() === f.doc;
+  const sels = f.doc.listSelections(), scroll = active ? cm.getScrollInfo() : null;
+  f.doc.setValue(disk);
+  try { f.doc.setSelections(sels); } catch (_) {}
+  if (active) cm.scrollTo(scroll.left, scroll.top);
+  f.eol = f.eol0 = /\r\n/.test(text) ? '\r\n' : '\n'; f.bom = bom;
+  f.gen = f.doc.changeGeneration(true); f.conflict = false;
+  if (fp === ist().file && IDE.mdView.has(fp)) renderMarkdown(fp);
+  renderEdChrome();
 }
 async function fileChangedByClaude(fp, created) {
   const key = normPath(fp);
@@ -885,36 +990,116 @@ async function fileChangedByClaude(fp, created) {
   if (created) { // a new file may live in a folder we have cached
     const dir = key.slice(0, key.lastIndexOf('\\'));
     Object.keys(IDE.dirCache).forEach(d => { if (normPath(d) === dir) delete IDE.dirCache[d]; });
+    delete IDE.index[IDE.project];
   }
   const open = Object.keys(IDE.files).find(k => normPath(k) === key);
-  if (open && !isDirty(open)) {
-    try {
-      const r = await api.invoke('fs:read', open);
-      if (!r.error) {
-        const f = IDE.files[open];
-        const cur = f.doc.getCursor();
-        f.doc.setValue(r.text); f.doc.setCursor(cur);
-        f.gen = f.doc.changeGeneration(true);
-        if (open === ist().file && !$('#mdView').hidden) renderMarkdown(open);
-      }
-    } catch (_) {}
-  }
+  if (open) await reloadFromDisk(open);
   if (S.mode === 'ide') { renderTree(); renderEdChrome(); }
 }
+/* the folder watcher (main process) reports changes made outside the editor */
+const FSQ = { paths: new Set(), git: false, many: false, timer: null };
+function onFsChanged(ev) {
+  const r = projRoot();
+  if (!r || normPath(ev.root) !== normPath(r)) return;
+  ev.paths.forEach(p => FSQ.paths.add(p));
+  if (ev.git) FSQ.git = true;
+  if (ev.many) FSQ.many = true;
+  clearTimeout(FSQ.timer); FSQ.timer = setTimeout(applyFsChanges, 120);
+}
+async function applyFsChanges() {
+  const paths = [...FSQ.paths], many = FSQ.many, git = FSQ.git;
+  FSQ.paths.clear(); FSQ.many = FSQ.git = false;
+  const structural = many || paths.length > 0;
+  if (structural) delete IDE.index[IDE.project];
+  if (many) IDE.dirCache = {};
+  else if (paths.length) {
+    const dirs = new Set();
+    paths.forEach(p => { const n = normPath(p); dirs.add(n); dirs.add(n.slice(0, n.lastIndexOf('\\'))); });
+    Object.keys(IDE.dirCache).forEach(d => { if (dirs.has(normPath(d))) delete IDE.dirCache[d]; });
+  }
+  const changed = new Set(paths.map(normPath));
+  await Promise.all(Object.keys(IDE.files).filter(fp => many || changed.has(normPath(fp))).map(fp => reloadFromDisk(fp)));
+  if (git) refreshGit();
+  if (S.mode === 'ide' && structural) renderTree();
+}
+let gitTimer = null;
+function refreshGit() {
+  clearTimeout(gitTimer);
+  gitTimer = setTimeout(async () => {
+    const p = proj(IDE.project); if (!p) return;
+    let g; try { g = await api.invoke('ide:git', p.path); } catch (_) { g = { repo: false, files: {} }; }
+    if (!proj(IDE.project) || proj(IDE.project).path !== p.path) return;
+    const root = normPath(p.path).replace(/\\+$/, ''), dirs = new Set();
+    for (const [k, c] of Object.entries(g.files)) {
+      if (c === 'D') continue;
+      let d = k;
+      while ((d = d.slice(0, d.lastIndexOf('\\'))).length > root.length) dirs.add(d);
+    }
+    IDE.git = { repo: g.repo, branch: g.branch || '', files: g.files, dirs };
+    if (S.mode === 'ide') { renderTree(); renderEdChrome(); }
+  }, 250);
+}
 function renderEdChrome() {
-  if (!IDE.project) return;
+  if (!IDE.project) { renderEdStatus(); return; }
   const s = ist(), key = s.file;
+  const cur = key && IDE.files[key];
   $('#tbSave').disabled = !(key && isDirty(key));
   $('#tbSaveAll').disabled = !s.tabs.some(isDirty);
-  $('#etabs').innerHTML = s.tabs.length ? s.tabs.map(k => `<div class="etab ${k === key ? 'on' : ''}"><button data-file="${esc(k)}" title="${esc(k)}">${fileIcon(k)}${esc(baseName(k))}${isDirty(k) ? ' <span class="dirty" title="Kaydedilmedi">●</span>' : ''}</button><button class="tab-x" data-fclose="${esc(k)}" aria-label="Dosyayı kapat">×</button></div>`).join('') : '<span class="etabs-empty">Açık dosya yok</span>';
-  if (!key) { $('#crumb').innerHTML = ''; return; }
+  // two open files with the same name: show their folder too
+  const names = {};
+  s.tabs.forEach(k => { const b = baseName(k).toLowerCase(); names[b] = (names[b] || 0) + 1; });
+  $('#etabs').innerHTML = s.tabs.length ? s.tabs.map(k => {
+    const f = IDE.files[k], d = isDirty(k), g = gitOf(k);
+    const dup = names[baseName(k).toLowerCase()] > 1 ? `<span class="et-dir">${esc(baseName(dirOf(k)))}</span>` : '';
+    return `<div class="etab ${k === key ? 'on' : ''} ${d ? 'is-dirty' : ''} ${g ? 'g-' + g : ''} ${f && f.missing ? 'is-gone' : ''}" data-etab="${esc(k)}" title="${esc(relOf(k))}${g ? ' · ' + GIT_TITLE[g] : ''}${d ? ' · kaydedilmedi' : ''}">`
+      + `<button data-file="${esc(k)}" role="tab" aria-selected="${k === key}">${fileIcon(k)}<span class="et-n">${esc(baseName(k))}</span>${dup}</button>`
+      + `<button class="tab-x" data-fclose="${esc(k)}" aria-label="${esc(baseName(k))} dosyasını kapat" title="Kapat (orta tık)"><i class="fa-solid fa-xmark"></i><span class="et-dot" aria-hidden="true"></span></button></div>`;
+  }).join('') : '<span class="etabs-empty">Açık dosya yok</span>';
+  const on = $('#etabs .etab.on'); if (on) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  renderDiskBar();
+  renderEdStatus();
+  if (!key) { $('#crumb').innerHTML = ''; $('#crumb').hidden = true; return; }
+  $('#crumb').hidden = false;
   const p = proj(IDE.project);
-  const relp = p && key.toLowerCase().startsWith(p.path.toLowerCase()) ? key.slice(p.path.length).replace(/^[\\/]/, '') : key;
+  const relp = relOf(key);
   const dirty = isDirty(key), mod = S.modified[normPath(key)];
-  $('#crumb').innerHTML = `<span>${esc(p ? p.name : '')} › ${esc(relp.split(/[\\/]/).join(' › '))}</span>`
-    + (mod ? `<span class="crumb-mod">● Claude değiştirdi · ${rel(mod)}</span>` : '')
+  const parts = relp.split(/[\\/]/);
+  $('#crumb').innerHTML = `<span class="cr-path"><span class="cr-p">${esc(p ? p.name : '')}</span>${parts.map((x, i) => `<i class="fa-solid fa-chevron-right cr-sep" aria-hidden="true"></i><span class="${i === parts.length - 1 ? 'cr-f' : 'cr-p'}">${esc(x)}</span>`).join('')}</span>`
+    + (mod ? `<span class="crumb-mod" title="Claude bu dosyayı düzenledi"><i class="fa-solid fa-robot"></i> Claude değiştirdi · ${rel(mod)}</span>` : '')
     + (isMarkdown(key) ? `<span class="seg md-seg"><button class="${IDE.mdView.has(key) ? '' : 'on'}" data-mdmode="src" title="Markdown kaynağını düzenle"><i class="fa-solid fa-code"></i> Yazı</button><button class="${IDE.mdView.has(key) ? 'on' : ''}" data-mdmode="view" title="Biçimlendirilmiş görünüm"><i class="fa-solid fa-eye"></i> Görünüm</button></span>` : '')
-    + `<span class="save-wrap"><span class="${dirty ? 'crumb-mod' : ''}">${dirty ? 'Kaydedilmedi' : 'Kaydedildi'}</span><button class="btn ${dirty ? 'primary' : ''}" id="saveBtn" ${dirty ? '' : 'disabled'}>Kaydet <kbd>Ctrl+S</kbd></button></span>`;
+    + (cur && cur.image ? '' : `<span class="save-wrap"><span class="sv-st ${dirty ? 'is-dirty' : ''}">${dirty ? 'Kaydedilmedi' : 'Kaydedildi'}</span><button class="btn ${dirty ? 'primary' : ''}" id="saveBtn" ${dirty ? '' : 'disabled'}>Kaydet <kbd>Ctrl+S</kbd></button></span>`);
+}
+/* a bar above the editor when the file changed on disk under unsaved edits, or disappeared */
+function renderDiskBar() {
+  const fp = ist().file, f = fp && IDE.files[fp], el = $('#diskBar');
+  if (!f || (!f.conflict && !f.missing)) { el.hidden = true; return; }
+  el.hidden = false;
+  el.className = 'disk-bar ' + (f.missing ? 'gone' : 'conflict');
+  el.innerHTML = f.missing
+    ? '<i class="fa-solid fa-triangle-exclamation"></i><span>Bu dosya diskte yok: silinmiş ya da taşınmış.</span>'
+      + (f.doc ? '<button class="btn" data-ixdisk="save">Kaydet ve yeniden oluştur</button>' : '') + '<button class="btn" data-ixdisk="close">Sekmeyi kapat</button>'
+    : '<i class="fa-solid fa-code-compare"></i><span>Dosya diskte değişti (ör. Claude düzenledi), ama sende kaydedilmemiş değişiklikler var.</span>'
+      + '<button class="btn primary" data-ixdisk="load">Diskteki sürümü yükle</button><button class="btn" data-ixdisk="keep">Benimkini koru</button>';
+}
+/* editor status strip: cursor, indentation, encoding, line endings, language, wrap */
+function renderEdStatus() {
+  const el = $('#edStatus'); if (!el) return;
+  const fp = IDE.project && ist().file, f = fp && IDE.files[fp];
+  if (!f) { el.hidden = true; return; }
+  el.hidden = false;
+  const g = gitOf(fp);
+  const left = (IDE.git.repo && IDE.git.branch ? `<span class="es-i" title="Git dalı"><i class="fa-solid fa-code-branch"></i>${esc(IDE.git.branch)}</span>` : '')
+    + (g ? `<span class="es-i es-g g-${g}" title="Git durumu">${GIT_TITLE[g]}</span>` : '');
+  if (f.image) { el.innerHTML = left + `<span class="es-sp"></span><span class="es-i">Görsel önizleme</span>`; return; }
+  const cm = IDE.cm, c = cm.getCursor();
+  const selLen = cm.getSelections().reduce((a, s) => a + s.length, 0);
+  el.innerHTML = left + '<span class="es-sp"></span>'
+    + `<button class="es-i" data-ixes="goto" title="Satıra git (Ctrl+G)">Satır ${c.line + 1}, Sütun ${c.ch + 1}${selLen ? ` <span class="es-m">(${selLen} seçili)</span>` : ''}</button>`
+    + `<span class="es-i" title="Girinti">Boşluk: ${cm.getOption('indentUnit')}</span>`
+    + `<span class="es-i" title="Karakter kodlaması">${f.bom ? 'UTF-8 BOM' : 'UTF-8'}</span>`
+    + `<button class="es-i" data-ixes="eol" title="Satır sonu: tıklayınca ${f.eol === '\r\n' ? 'LF' : 'CRLF'} olur (kaydedince uygulanır)">${f.eol === '\r\n' ? 'CRLF' : 'LF'}</button>`
+    + `<span class="es-i" title="Dil">${esc(langName(fp))}</span>`
+    + `<button class="es-i" data-ixes="wrap" aria-pressed="${!!IDE.ui.wrap}" title="Satır sarmayı aç / kapat (Alt+Z)"><i class="fa-solid fa-arrow-turn-down"></i>Sarma ${IDE.ui.wrap ? 'açık' : 'kapalı'}</button>`;
 }
 async function loadDir(dir) {
   if (IDE.dirCache[dir]) return IDE.dirCache[dir];
@@ -924,18 +1109,45 @@ async function loadDir(dir) {
 let treeToken = 0;
 async function renderTree() {
   const p = proj(IDE.project);
-  if (!p) { $('#tree').innerHTML = ''; return; }
+  if (!p) { $('#tree').innerHTML = '<div class="ex-empty"><i class="fa-regular fa-folder-open"></i><b>Proje yok</b><span>Claude modunda “Proje ekle” ile bir klasör ekle.</span></div>'; return; }
+  if (IDE.watched !== p.path) { // follow the project shown in the IDE
+    IDE.watched = p.path;
+    api.invoke('ide:watch', p.path).catch(() => {});
+    IDE.git = { repo: false, files: {}, dirs: new Set(), branch: '' };
+    refreshGit();
+  }
   const my = ++treeToken;
   await loadDir(p.path);
   const loadOpen = async dir => { for (const e of IDE.dirCache[dir] || []) if (e.dir && IDE.expanded[e.path]) { await loadDir(e.path); await loadOpen(e.path); } };
   await loadOpen(p.path);
   if (my !== treeToken) return;
   const cur = ist().file;
-  const walk = (dir, d) => (IDE.dirCache[dir] || []).map(e => e.dir
-    ? `<button class="fx dir ${IDE.expanded[e.path] ? '' : 'closed'}" style="--d:${d}" data-dir="${esc(e.path)}"><i class="car fa-solid fa-chevron-down" aria-hidden="true"></i>${IDE.expanded[e.path] ? FOLDER_OPEN : FOLDER}<span class="fn">${esc(e.name)}</span></button>` + (IDE.expanded[e.path] ? walk(e.path, d + 1) : '')
-    : `<button class="fx file ${e.path === cur ? 'on' : ''} ${/^(~\$|\.)/.test(e.name) ? 'dim' : ''}" style="--d:${d}" data-file="${esc(e.path)}" title="${esc(e.name)}">${fileIcon(e.name)}<span class="fn">${esc(e.name)}</span>${S.modified[normPath(e.path)] ? '<span class="mod" title="Claude değiştirdi">M</span>' : ''}</button>`).join('');
+  const walk = (dir, d) => (IDE.dirCache[dir] || []).map(e => {
+    if (e.dir) {
+      const open = IDE.expanded[e.path], gd = IDE.git.dirs.has(normPath(e.path));
+      return `<button class="fx dir ${open ? '' : 'closed'} ${gd ? 'g-dir' : ''}" style="--d:${d}" data-dir="${esc(e.path)}" aria-expanded="${!!open}" title="${esc(e.name)}${gd ? ' · içinde değişiklik var' : ''}"><i class="car fa-solid fa-chevron-down" aria-hidden="true"></i>${open ? FOLDER_OPEN : FOLDER}<span class="fn">${esc(e.name)}</span>${gd ? '<span class="gdot" aria-hidden="true"></span>' : ''}</button>` + (open ? walk(e.path, d + 1) : '');
+    }
+    const g = gitOf(e.path), m = S.modified[normPath(e.path)];
+    return `<button class="fx file ${e.path === cur ? 'on' : ''} ${/^(~\$|\.)/.test(e.name) ? 'dim' : ''} ${g ? 'g-' + g : ''}" style="--d:${d}" data-file="${esc(e.path)}" title="${esc(e.name)}${g ? ' · ' + GIT_TITLE[g] : ''}${m ? ' · Claude değiştirdi' : ''}">${fileIcon(e.name)}<span class="fn">${esc(e.name)}</span>${m ? '<span class="mod" aria-label="Claude değiştirdi"><i class="fa-solid fa-robot"></i></span>' : ''}${g ? `<span class="gb">${g}</span>` : ''}</button>`;
+  }).join('');
   const html = walk(p.path, 0);
-  $('#tree').innerHTML = html || '<div class="empty-side">Klasör boş.</div>';
+  const tree = $('#tree');
+  const focused = document.activeElement && document.activeElement.closest && document.activeElement.closest('#tree .fx');
+  const keep = focused ? (focused.dataset.file || focused.dataset.dir) : null, top = tree.scrollTop;
+  tree.innerHTML = html || '<div class="ex-empty"><i class="fa-regular fa-folder"></i><b>Klasör boş</b><span>Sağ tıkla ya da yukarıdaki düğmelerle dosya ekle.</span></div>';
+  tree.scrollTop = top;
+  const find = fp => $$('#tree .fx').find(b => (b.dataset.file || b.dataset.dir) === fp);
+  if (keep) { const b = find(keep); if (b) b.focus({ preventScroll: true }); }
+  if (IDE.reveal) { const b = find(IDE.reveal); IDE.reveal = null; if (b) b.scrollIntoView({ block: 'center' }); }
+}
+/* open the folders on the way to a file and scroll it into view */
+function revealInTree(fp) {
+  const r = projRoot(); if (!r || !under(fp, r)) return;
+  let d = dirOf(fp);
+  while (d.length > r.length) { IDE.expanded[d] = true; d = dirOf(d); }
+  if (IDE.view !== 'files') setExView('files');
+  IDE.reveal = fp;
+  renderTree();
 }
 function renderIde() {
   if (!IDE.project || !proj(IDE.project)) IDE.project = S.projects[0] ? S.projects[0].id : null;
@@ -955,6 +1167,7 @@ function renderIde() {
 function switchIdeProject(pid) {
   if (pid === IDE.project) return;
   IDE.project = pid;
+  IDE.search.res = null; renderSearch();
   const live = S.tabs.filter(t => t.projectId === pid);
   if (!live.some(t => t.id === S.active)) S.active = live.length ? live[live.length - 1].id : null;
   showFile();
@@ -969,10 +1182,13 @@ function applyIdeUi() {
   $('#tbEx').setAttribute('aria-pressed', IDE.ui.ex);
   $('#tbPanel').setAttribute('aria-pressed', IDE.ui.panel);
   $('#tbSize').textContent = IDE.ui.size + 'px';
+  IDE.cm.setOption('lineWrapping', !!IDE.ui.wrap);
+  renderEdStatus();
   requestAnimationFrame(() => { IDE.cm.refresh(); fitActive(); });
 }
 function saveIdeUi() { applyIdeUi(); setCfg({ ide: { ui: IDE.ui } }); }
-function findNext(q) {
+function toggleWrap() { IDE.ui.wrap = !IDE.ui.wrap; saveIdeUi(); }
+function findNext(q, back) {
   const cm = IDE.cm;
   if (!q || cm.getWrapperElement().hidden) { $('#findN').textContent = ''; return; }
   let count = 0;
@@ -980,17 +1196,23 @@ function findNext(q) {
   while (all.findNext() && count < 9999) count++;
   $('#findN').textContent = count ? count + ' eşleşme' : 'Bulunamadı';
   if (!count) return;
-  let cur = cm.getSearchCursor(q, cm.getCursor('to'), { caseFold: true });
-  if (!cur.findNext()) { cur = cm.getSearchCursor(q, CodeMirror.Pos(0, 0), { caseFold: true }); cur.findNext(); }
+  let cur = cm.getSearchCursor(q, cm.getCursor(back ? 'from' : 'to'), { caseFold: true });
+  if (!(back ? cur.findPrevious() : cur.findNext())) {
+    cur = cm.getSearchCursor(q, back ? CodeMirror.Pos(cm.lastLine()) : CodeMirror.Pos(0, 0), { caseFold: true });
+    if (back) cur.findPrevious(); else cur.findNext();
+  }
   cm.setSelection(cur.from(), cur.to());
   cm.scrollIntoView({ from: cur.from(), to: cur.to() }, 80);
 }
-async function askClaude() {
-  const fp = ist().file, p = proj(IDE.project);
+/* puts "@path" (and the selected lines) into the project's Claude session */
+async function askClaude(target, targetIsDir) {
+  const p = proj(IDE.project);
+  const fp = target || ist().file;
   if (!fp || !p) { toast('Önce bir dosya aç'); return; }
-  let ref = '@' + (fp.toLowerCase().startsWith(p.path.toLowerCase()) ? fp.slice(p.path.length).replace(/^[\\/]/, '') : fp).replace(/\\/g, '/');
-  const cm = IDE.cm;
-  if (cm.somethingSelected()) {
+  const isDir = !!targetIsDir;
+  let ref = '@' + relOf(fp).replace(/\\/g, '/') + (isDir ? '/' : '');
+  const cm = IDE.cm, f = IDE.files[fp];
+  if (fp === ist().file && f && f.doc && cm.somethingSelected()) {
     const a = cm.getCursor('from').line + 1, b = cm.getCursor('to').line + 1;
     ref += a === b ? ` (satır ${a})` : ` (satır ${a}-${b})`;
   }
@@ -1002,6 +1224,421 @@ async function askClaude() {
   if (!t) return;
   activate(t.id);
   setTimeout(() => { if (!t.exited) api.send('pty:write', t.id, ref + ' '); t.term.focus(); }, delay);
+}
+
+/* ---------- explorer: files / search views ---------- */
+function setExView(v) {
+  IDE.view = v;
+  $$('[data-exview]').forEach(b => { b.classList.toggle('on', b.dataset.exview === v); b.setAttribute('aria-selected', b.dataset.exview === v); });
+  $('#tree').hidden = v !== 'files';
+  $('#psearch').hidden = v !== 'search';
+  $('#exFileActs').hidden = v !== 'files';
+  if (v === 'search') { renderSearch(); requestAnimationFrame(() => { $('#psIn').focus(); $('#psIn').select(); }); }
+}
+function openProjectSearch() {
+  if (!IDE.ui.ex) { IDE.ui.ex = true; saveIdeUi(); }
+  const cm = IDE.cm, f = IDE.files[ist().file];
+  const sel = f && f.doc && !cm.getWrapperElement().hidden && cm.somethingSelected() ? cm.getSelection() : '';
+  if (sel && !sel.includes('\n') && sel.length < 200) { $('#psIn').value = sel; IDE.search.q = ''; }
+  setExView('search');
+  if (sel) runSearch();
+}
+let searchTimer = null;
+async function runSearch() {
+  clearTimeout(searchTimer);
+  const S2 = IDE.search, q = $('#psIn').value, p = proj(IDE.project);
+  if (!p) return;
+  if (!q.trim()) { S2.q = ''; S2.res = null; renderSearch(); return; }
+  const sig = [q, S2.case, S2.word, S2.regex, p.id].join('\u0001');
+  if (sig === S2.q && S2.res && !S2.res.stale) return;
+  S2.q = sig; S2.busy = true; S2.closed = new Set();
+  const my = ++S2.token;
+  renderSearch();
+  let r; try { r = await api.invoke('ide:search', p.path, q, { case: S2.case, word: S2.word, regex: S2.regex }); } catch (e) { r = { error: cleanErr(e) }; }
+  if (my !== S2.token) return;
+  S2.busy = false;
+  S2.res = { ...r, pid: p.id, root: p.path.replace(/[\\/]+$/, ''), q };
+  renderSearch();
+}
+function renderSearch() {
+  const S2 = IDE.search, sum = $('#psSum'), box = $('#psRes');
+  $$('[data-psopt]').forEach(b => b.setAttribute('aria-pressed', !!S2[b.dataset.psopt]));
+  const res = S2.res && S2.res.pid === IDE.project ? S2.res : null;
+  if (S2.busy) { sum.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Aranıyor…'; return; }
+  if (!res) { sum.textContent = ''; box.innerHTML = '<div class="ex-empty"><i class="fa-solid fa-magnifying-glass"></i><b>Projede ara</b><span>Yaz ve Enter’a bas. Sonuca tıklayınca dosya o satırda açılır.</span></div>'; return; }
+  if (res.error) { sum.innerHTML = `<span class="ps-err">${esc(res.error)}</span>`; box.innerHTML = ''; return; }
+  if (!res.hits.length) { sum.textContent = 'Sonuç bulunamadı.'; box.innerHTML = ''; return; }
+  sum.textContent = `${res.files} dosyada ${res.hits.length}${res.truncated ? '+' : ''} sonuç` + (res.truncated ? ' (ilk 2000 gösteriliyor)' : '');
+  const groups = new Map();
+  res.hits.forEach((h, i) => { if (!groups.has(h.file)) groups.set(h.file, []); groups.get(h.file).push(i); });
+  let html = '';
+  for (const [file, idx] of groups) {
+    const shut = S2.closed.has(file), dir = dirOf(file);
+    html += `<button class="ps-f ${shut ? 'closed' : ''}" data-psfile="${esc(file)}" aria-expanded="${!shut}" title="${esc(file)}"><i class="car fa-solid fa-chevron-down" aria-hidden="true"></i>${fileIcon(file)}<span class="fn">${esc(baseName(file))}</span><span class="ps-dir">${esc(dir)}</span><span class="ps-n">${idx.length}</span></button>`;
+    if (shut) continue;
+    html += idx.map(i => {
+      const h = res.hits[i], a = h.col - h.pre, t = h.text;
+      // the panel is narrow: keep only a little text before the match so the match stays visible
+      let before = t.slice(0, a).replace(/^\s+/, '');
+      const cut = h.pre > 0 || before.length > 18;
+      if (before.length > 18) before = before.slice(-18);
+      return `<button class="ps-h" data-pshit="${i}" title="Satır ${h.line}: ${esc(t.trim())}"><span class="ps-ln">${h.line}</span><span class="ps-t">${cut ? '…' : ''}${esc(before)}<mark>${esc(t.slice(a, a + h.len))}</mark>${esc(t.slice(a + h.len))}</span></button>`;
+    }).join('');
+  }
+  box.innerHTML = html;
+}
+
+/* ---------- quick open (Ctrl+P), go to line (Ctrl+G) and name prompts ---------- */
+const QO = { mode: 'file', items: [], sel: 0, resolve: null, validate: null };
+async function fileIndex() {
+  const p = proj(IDE.project); if (!p) return null;
+  if (IDE.index[p.id]) return IDE.index[p.id];
+  try { IDE.index[p.id] = await api.invoke('ide:files', p.path); } catch (_) { IDE.index[p.id] = { files: [], complete: true }; }
+  return IDE.index[p.id];
+}
+/* subsequence match; rewards word starts, runs and hits in the file name */
+function fuzzy(q, path) {
+  const t = path.toLowerCase(), base = t.lastIndexOf('\\') + 1;
+  const tryFrom = start => {
+    let qi = 0, score = 0, last = -2;
+    const pos = [];
+    for (let i = start; i < t.length && qi < q.length; i++) {
+      if (t[i] !== q[qi]) continue;
+      let sc = 1;
+      if (i === last + 1) sc += 4;
+      if (i === base || /[\\/._\-\s]/.test(t[i - 1] || '\\')) sc += 3;
+      if (i >= base) sc += 2;
+      score += sc; pos.push(i); last = i; qi++;
+    }
+    return qi === q.length ? { score, pos } : null;
+  };
+  // prefer a match that stays inside the file name
+  const r = tryFrom(base) || tryFrom(0);
+  if (!r) return null;
+  if (t.slice(base).startsWith(q)) r.score += 12;
+  r.score -= t.length * 0.05;
+  return r;
+}
+const markPos = (s, pos, off) => { let out = ''; for (let i = 0; i < s.length; i++) out += pos.has(i + off) ? `<b>${esc(s[i])}</b>` : esc(s[i]); return out; };
+function openPalette(text) {
+  if (S.mode !== 'ide') setMode('ide');
+  if (!proj(IDE.project)) { toast('Önce bir proje ekle'); return; }
+  QO.mode = 'file'; QO.resolve = null; QO.validate = null;
+  $('#qoBg').hidden = false;
+  $('#qoTitle').hidden = true;
+  const inp = $('#qoIn');
+  inp.value = text || ''; inp.placeholder = 'Dosya adı yaz · satıra gitmek için : yaz';
+  inp.setAttribute('aria-label', 'Dosyaya git');
+  inp.focus();
+  if (text === ':') inp.setSelectionRange(1, 1);
+  QO.sel = 0;
+  renderPalette();
+  fileIndex().then(() => { if (!$('#qoBg').hidden && QO.mode === 'file') renderPalette(); });
+}
+/* a small dialog for a name; resolves to the text, or null when cancelled */
+function askName({ title, hint, value = '', select, placeholder = '', validate }) {
+  if (QO.resolve) QO.resolve(null);
+  return new Promise(resolve => {
+    QO.mode = 'prompt'; QO.resolve = resolve; QO.validate = validate || null; QO.hint = hint || '';
+    $('#qoBg').hidden = false;
+    $('#qoTitle').hidden = false; $('#qoTitle').textContent = title;
+    const inp = $('#qoIn');
+    inp.value = value; inp.placeholder = placeholder; inp.setAttribute('aria-label', title);
+    inp.focus();
+    if (select) inp.setSelectionRange(select[0], select[1]); else inp.select();
+    renderPalette();
+  });
+}
+function closePalette(result) {
+  if ($('#qoBg').hidden) return;
+  $('#qoBg').hidden = true;
+  const r = QO.resolve; QO.resolve = null;
+  if (r) r(result == null ? null : result);
+  if (!IDE.cm.getWrapperElement().hidden && result === undefined) IDE.cm.focus();
+}
+function renderPalette() {
+  const v = $('#qoIn').value, list = $('#qoList'), foot = $('#qoFoot');
+  if (QO.mode === 'prompt') {
+    const err = QO.validate ? QO.validate(v) : '';
+    QO.items = [];
+    list.innerHTML = `<div class="qo-note ${err && v ? 'err' : ''}">${esc(err && v ? err : QO.hint)}</div>`;
+    foot.innerHTML = '<span><kbd>Enter</kbd> onayla</span><span><kbd>Esc</kbd> vazgeç</span>';
+    return;
+  }
+  foot.innerHTML = '<span><kbd>↑</kbd><kbd>↓</kbd> seç</span><span><kbd>Enter</kbd> aç</span><span><kbd>:</kbd>12 satıra git</span><span><kbd>Esc</kbd> kapat</span>';
+  const m = v.match(/^(.*?):(\d*)$/);
+  const q = (m ? m[1] : v).trim(), line = m ? +m[2] || 0 : 0;
+  const cur = ist().file, f = cur && IDE.files[cur];
+  if (m && !q) { // ":42" — a line in the open file
+    QO.items = f && f.doc ? [{ line: line || 1 }] : [];
+    list.innerHTML = f && f.doc
+      ? `<button class="qo-row sel" data-qoi="0"><i class="fa-solid fa-arrow-right-to-bracket qo-ic"></i><span class="qo-n">${line ? `Satır ${line}’e git` : 'Bir satır numarası yaz'}</span><span class="qo-d">${esc(baseName(cur))} · 1–${IDE.cm.lineCount()}</span></button>`
+      : '<div class="qo-note">Satıra gitmek için önce bir metin dosyası aç.</div>';
+    QO.sel = 0;
+    return;
+  }
+  const idx = IDE.index[IDE.project];
+  if (!idx) { QO.items = []; list.innerHTML = '<div class="qo-note"><i class="fa-solid fa-spinner fa-spin"></i> Dosyalar taranıyor…</div>'; return; }
+  const root = projRoot();
+  let items;
+  if (!q) {
+    // nothing typed: open tabs first (most recent last → first), then the rest
+    const open = [...ist().tabs].reverse().filter(x => x !== cur).map(x => relOf(x));
+    const seen = new Set(open.map(x => x.toLowerCase()));
+    items = [...open, ...idx.files.filter(x => !seen.has(x.toLowerCase()))].slice(0, 60).map(rel => ({ rel, pos: new Set(), open: seen.has(rel.toLowerCase()) }));
+  } else {
+    const ql = q.toLowerCase().replace(/\//g, '\\').replace(/\s+/g, '');
+    const scored = [];
+    for (const rel of idx.files) { const r = fuzzy(ql, rel); if (r) scored.push({ rel, score: r.score, pos: new Set(r.pos) }); }
+    scored.sort((a, b) => b.score - a.score || a.rel.length - b.rel.length);
+    items = scored.slice(0, 60);
+  }
+  QO.items = items.map(it => ({ ...it, full: joinP(root, it.rel), line }));
+  QO.sel = Math.min(QO.sel, Math.max(0, QO.items.length - 1));
+  list.innerHTML = QO.items.length ? QO.items.map((it, i) => {
+    const b = it.rel.lastIndexOf('\\') + 1, name = it.rel.slice(b), dir = it.rel.slice(0, Math.max(0, b - 1));
+    const g = gitOf(it.full);
+    return `<button class="qo-row ${i === QO.sel ? 'sel' : ''} ${g ? 'g-' + g : ''}" data-qoi="${i}" role="option" aria-selected="${i === QO.sel}">${fileIcon(name)}<span class="qo-n">${markPos(name, it.pos, b)}</span><span class="qo-d">${markPos(dir, it.pos, 0)}</span>${it.open ? '<span class="qo-tag">açık</span>' : ''}</button>`;
+  }).join('') + (idx.complete ? '' : '<div class="qo-note">Proje çok büyük; yalnızca ilk 20.000 dosya tarandı.</div>')
+    : `<div class="qo-note">“${esc(q)}” ile eşleşen dosya yok.</div>`;
+  const s = list.querySelector('.qo-row.sel'); if (s) s.scrollIntoView({ block: 'nearest' });
+}
+function pickPalette(i) {
+  if (QO.mode === 'prompt') {
+    const v = $('#qoIn').value;
+    if (QO.validate && QO.validate(v)) { renderPalette(); return; }
+    closePalette(v.trim());
+    return;
+  }
+  const it = QO.items[i == null ? QO.sel : i]; if (!it) return;
+  closePalette(null);
+  if (!it.rel) { gotoPos({ line: it.line }); return; }
+  openFile(it.full, it.line ? { line: it.line } : null).then(() => { revealInTree(it.full); if (!it.line && !IDE.cm.getWrapperElement().hidden) IDE.cm.focus(); });
+}
+
+/* ---------- file operations from the tree ---------- */
+async function newEntry(dir, isDir) {
+  const r = projRoot(); if (!r) { toast('Önce bir proje ekle'); return; }
+  dir = dir && under(dir, r) ? dir : r;
+  const where = normPath(dir) === normPath(r) ? 'proje kökü' : relOf(dir);
+  const name = await askName({
+    title: isDir ? 'Yeni klasör' : 'Yeni dosya',
+    hint: `Konum: ${where} · alt klasör için / kullanabilirsin`,
+    placeholder: isDir ? 'klasör-adı' : 'dosya-adı.js',
+    validate: v => nameError(v, true),
+  });
+  if (!name) return;
+  const clean = name.replace(/\//g, '\\').replace(/^\\+|\\+$/g, '');
+  const full = joinP(dir, clean);
+  let st = { exists: false }; try { st = await api.invoke('fs:stat', full); } catch (_) {}
+  if (st.exists && (isDir || st.dir)) { toast('Zaten var', `${clean} adında bir ${st.dir ? 'klasör' : 'dosya'} var.`); return; }
+  if (!st.exists) {
+    try { await api.invoke(isDir ? 'fs:mkdir' : 'fs:create', full); } catch (e) { toast(isDir ? 'Klasör oluşturulamadı' : 'Dosya oluşturulamadı', cleanErr(e)); return; }
+  }
+  IDE.dirCache = {}; delete IDE.index[IDE.project];
+  IDE.expanded[dir] = true;
+  if (isDir) { IDE.expanded[full] = true; revealInTree(full); }
+  else { await openFile(full); revealInTree(full); }
+}
+function remapPaths(from, to) {
+  const swap = k => (under(k, from) ? to + k.slice(from.length) : k);
+  const files = {};
+  for (const [k, f] of Object.entries(IDE.files)) files[swap(k)] = f;
+  IDE.files = files;
+  for (const st of Object.values(IDE.state)) { st.tabs = st.tabs.map(swap); if (st.file) st.file = swap(st.file); }
+  IDE.mdView = new Set([...IDE.mdView].map(swap));
+  const exp = {}; for (const [k, v] of Object.entries(IDE.expanded)) exp[swap(k)] = v; IDE.expanded = exp;
+  const fromN = normPath(from), toN = normPath(to);
+  for (const k of Object.keys(S.modified)) if (k === fromN || k.startsWith(fromN + '\\')) { S.modified[toN + k.slice(fromN.length)] = S.modified[k]; delete S.modified[k]; }
+  saveIdeState();
+}
+async function renameEntry(fp, isDir) {
+  if (normPath(fp) === normPath(projRoot())) return;
+  const old = baseName(fp), dot = old.lastIndexOf('.');
+  const name = await askName({
+    title: isDir ? 'Klasörü yeniden adlandır' : 'Dosyayı yeniden adlandır',
+    hint: `Şu anki ad: ${old}`, value: old, select: [0, !isDir && dot > 0 ? dot : old.length],
+    validate: v => nameError(v, false),
+  });
+  if (!name || name === old) return;
+  const to = joinP(dirOf(fp), name);
+  try { await api.invoke('fs:rename', fp, to); } catch (e) { toast('Yeniden adlandırılamadı', cleanErr(e)); return; }
+  remapPaths(fp, to);
+  IDE.dirCache = {}; delete IDE.index[IDE.project];
+  IDE.reveal = to;
+  showFile();
+}
+async function deleteEntry(fp, isDir) {
+  if (normPath(fp) === normPath(projRoot())) return;
+  const open = Object.keys(IDE.files).filter(k => under(k, fp));
+  const dirty = open.filter(isDirty);
+  const msg = `“${baseName(fp)}” ${isDir ? 'klasörü ve içindekiler' : 'dosyası'} Geri Dönüşüm Kutusu’na taşınsın mı?`
+    + (dirty.length ? `\n\nKaydedilmemiş değişiklikler kaybolacak: ${dirty.map(baseName).join(', ')}` : '');
+  if (!confirm(msg)) return;
+  try { await api.invoke('fs:trash', fp); } catch (e) { toast('Silinemedi', cleanErr(e)); return; }
+  for (const st of Object.values(IDE.state)) {
+    const idx = st.tabs.indexOf(st.file);
+    st.tabs = st.tabs.filter(k => !under(k, fp));
+    if (st.file && under(st.file, fp)) st.file = st.tabs[Math.min(Math.max(idx, 0), st.tabs.length - 1)] || null;
+  }
+  open.forEach(k => { delete IDE.files[k]; IDE.mdView.delete(k); });
+  IDE.dirCache = {}; delete IDE.index[IDE.project];
+  saveIdeState(); showFile();
+  toast('Geri Dönüşüm Kutusu’na taşındı', baseName(fp));
+}
+function copyText(text, what) {
+  navigator.clipboard.writeText(text).then(() => toast(what, text), () => toast('Kopyalanamadı'));
+}
+
+/* ---------- context menus (tree and editor tabs) ---------- */
+function openIdeMenu(e, ctx) {
+  e.preventDefault();
+  IDE.menu = ctx;
+  const m = $('#ideMenu');
+  const it = (act, icon, label, key, cls = '') => `<button data-ixm="${act}" class="${cls}" role="menuitem"><span class="mi"><i class="mic ${icon}"></i>${label}</span>${key ? `<code>${key}</code>` : ''}</button>`;
+  const sep = '<div class="sep"></div>';
+  let html = '';
+  if (ctx.kind === 'tab') {
+    const s = ist(), i = s.tabs.indexOf(ctx.path);
+    html = it('close', 'fa-solid fa-xmark', 'Kapat', 'Ctrl+W')
+      + (s.tabs.length > 1 ? it('closeothers', 'fa-solid fa-clone', 'Diğerlerini kapat') : '')
+      + (i < s.tabs.length - 1 ? it('closeright', 'fa-solid fa-arrow-right-long', 'Sağdakileri kapat') : '')
+      + (s.tabs.some(k => !isDirty(k)) ? it('closesaved', 'fa-solid fa-check-double', 'Kaydedilmişleri kapat') : '')
+      + it('closeall', 'fa-solid fa-square-xmark', 'Tümünü kapat')
+      + sep + it('revealtree', 'fa-solid fa-folder-tree', 'Dosya ağacında göster')
+      + it('copy', 'fa-regular fa-copy', 'Yolu kopyala') + it('copyrel', 'fa-solid fa-link', 'Göreli yolu kopyala')
+      + it('reveal', 'fa-regular fa-folder-open', 'Dosya Gezgini’nde göster');
+  } else {
+    const root = !ctx.path || normPath(ctx.path) === normPath(projRoot());
+    html = it('newfile', 'fa-solid fa-file-circle-plus', 'Yeni dosya') + it('newdir', 'fa-solid fa-folder-plus', 'Yeni klasör')
+      + (root ? sep + it('collapse', 'fa-solid fa-angles-up', 'Tümünü daralt') + it('refresh', 'fa-solid fa-arrows-rotate', 'Yenile')
+        : sep + it('rename', 'fa-solid fa-i-cursor', 'Yeniden adlandır', 'F2') + it('delete', 'fa-regular fa-trash-can', 'Sil', 'Delete', 'danger'))
+      + sep + it('copy', 'fa-regular fa-copy', 'Yolu kopyala') + (root ? '' : it('copyrel', 'fa-solid fa-link', 'Göreli yolu kopyala'))
+      + it('reveal', 'fa-regular fa-folder-open', 'Dosya Gezgini’nde göster')
+      + (root ? '' : sep + it('ask', 'fa-solid fa-comment-dots', 'Claude’a sor', '', 'accent'));
+  }
+  m.innerHTML = html;
+  m.hidden = false;
+  const w = $('#win').getBoundingClientRect();
+  const left = Math.min(e.clientX - w.left, w.width - m.offsetWidth - 8), top = Math.min(e.clientY - w.top, w.height - m.offsetHeight - 8);
+  m.style.left = Math.max(8, left) + 'px'; m.style.top = Math.max(44, top) + 'px';
+  // keyboard users get the first item with Down; the menu itself takes focus so Esc works
+  m.tabIndex = -1; m.focus();
+}
+function closeIdeMenu() { $('#ideMenu').hidden = true; }
+function ideMenuAction(act) {
+  const ctx = IDE.menu; closeIdeMenu();
+  if (!ctx) return;
+  const r = projRoot(), fp = ctx.path || r, isDir = ctx.kind === 'tree' && (!ctx.path || ctx.dir);
+  const s = ist();
+  if (act === 'close') closeFile(fp);
+  else if (act === 'closeothers') closeFiles(s.tabs.filter(k => k !== fp));
+  else if (act === 'closeright') closeFiles(s.tabs.slice(s.tabs.indexOf(fp) + 1));
+  else if (act === 'closesaved') closeFiles(s.tabs.filter(k => !isDirty(k)));
+  else if (act === 'closeall') closeFiles([...s.tabs]);
+  else if (act === 'revealtree') { if (!IDE.ui.ex) { IDE.ui.ex = true; saveIdeUi(); } revealInTree(fp); }
+  else if (act === 'copy') copyText(fp, 'Yol kopyalandı');
+  else if (act === 'copyrel') copyText(relOf(fp), 'Göreli yol kopyalandı');
+  else if (act === 'reveal') api.invoke('fs:reveal', fp).catch(e => toast('Açılamadı', cleanErr(e)));
+  else if (act === 'newfile' || act === 'newdir') newEntry(isDir ? fp : dirOf(fp), act === 'newdir');
+  else if (act === 'rename') renameEntry(fp, isDir);
+  else if (act === 'delete') deleteEntry(fp, isDir);
+  else if (act === 'collapse') { IDE.expanded = {}; renderTree(); }
+  else if (act === 'refresh') { IDE.dirCache = {}; delete IDE.index[IDE.project]; renderTree(); refreshGit(); }
+  else if (act === 'ask') askClaude(fp, isDir);
+}
+/* shortcuts that belong to the IDE: only in IDE mode and not while typing in a terminal */
+const ideKeysOk = e => S.mode === 'ide' && !(e.target.closest && e.target.closest('.xterm')) && $('#settings').hidden && $('#report').hidden && $('#discover').hidden;
+
+function bindIde() {
+  api.on('ide:fs-changed', onFsChanged);
+  $('#refreshTree').onclick = () => { IDE.dirCache = {}; delete IDE.index[IDE.project]; renderTree(); refreshGit(); };
+  $('#exNewFile').onclick = () => newEntry(projRoot(), false);
+  $('#exNewDir').onclick = () => newEntry(projRoot(), true);
+  $('#exCollapse').onclick = () => { IDE.expanded = {}; renderTree(); };
+  $$('[data-exview]').forEach(b => b.addEventListener('click', () => setExView(b.dataset.exview)));
+  // tree: right click, F2, Delete, arrow keys
+  $('#tree').addEventListener('contextmenu', e => {
+    const b = e.target.closest('.fx');
+    openIdeMenu(e, b ? { kind: 'tree', path: b.dataset.file || b.dataset.dir, dir: !!b.dataset.dir } : { kind: 'tree', path: null, dir: true });
+  });
+  $('#tree').addEventListener('keydown', e => {
+    const b = e.target.closest('.fx'); if (!b) return;
+    const p = b.dataset.file || b.dataset.dir, isDir = !!b.dataset.dir;
+    const move = d => { const all = $$('#tree .fx'); const n = all[all.indexOf(b) + d]; if (n) n.focus(); };
+    if (e.key === 'F2') { e.preventDefault(); renameEntry(p, isDir); }
+    else if (e.key === 'Delete') { e.preventDefault(); deleteEntry(p, isDir); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+    else if (e.key === 'ArrowRight' && isDir) { e.preventDefault(); if (!IDE.expanded[p]) { IDE.expanded[p] = true; renderTree(); } else move(1); }
+    else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      if (isDir && IDE.expanded[p]) { IDE.expanded[p] = false; renderTree(); }
+      else { const parent = $$('#tree .fx.dir').find(x => x.dataset.dir === dirOf(p)); if (parent) parent.focus(); }
+    }
+  });
+  // editor tabs: middle click closes, right click opens the tab menu
+  $('#etabs').addEventListener('auxclick', e => { const t = e.target.closest('[data-etab]'); if (t && e.button === 1) { e.preventDefault(); closeFile(t.dataset.etab); } });
+  $('#etabs').addEventListener('mousedown', e => { if (e.button === 1) e.preventDefault(); }); // no autoscroll cursor
+  $('#etabs').addEventListener('contextmenu', e => { const t = e.target.closest('[data-etab]'); if (t) openIdeMenu(e, { kind: 'tab', path: t.dataset.etab }); });
+  $('#etabs').addEventListener('wheel', e => { if (e.deltaY && !e.deltaX) { $('#etabs').scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false });
+  $('#ideMenu').addEventListener('click', e => { const b = e.target.closest('[data-ixm]'); if (b) ideMenuAction(b.dataset.ixm); });
+  $('#ideMenu').addEventListener('keydown', e => {
+    const all = $$('#ideMenu button'), i = all.indexOf(document.activeElement); // -1 while the menu itself has focus
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const n = i < 0 ? all[e.key === 'ArrowDown' ? 0 : all.length - 1] : all[(i + (e.key === 'ArrowDown' ? 1 : -1) + all.length) % all.length]; if (n) n.focus(); }
+    else if (e.key === 'Escape') { e.stopPropagation(); closeIdeMenu(); }
+  });
+  document.addEventListener('mousedown', e => { if (!$('#ideMenu').hidden && !e.target.closest('#ideMenu')) closeIdeMenu(); }, true);
+  window.addEventListener('blur', closeIdeMenu);
+  // disk bar, status strip
+  $('#diskBar').addEventListener('click', async e => {
+    const b = e.target.closest('[data-ixdisk]'); if (!b) return;
+    const fp = ist().file, f = IDE.files[fp]; if (!f) return;
+    const a = b.dataset.ixdisk;
+    if (a === 'load') await reloadFromDisk(fp, true);
+    else if (a === 'keep') { f.conflict = false; renderEdChrome(); }
+    else if (a === 'save') { if (await saveFile(fp)) { IDE.dirCache = {}; renderTree(); } }
+    else if (a === 'close') closeFile(fp);
+  });
+  $('#edStatus').addEventListener('click', e => {
+    const b = e.target.closest('[data-ixes]'); if (!b) return;
+    const a = b.dataset.ixes, f = IDE.files[ist().file];
+    if (a === 'goto') openPalette(':');
+    else if (a === 'wrap') toggleWrap();
+    else if (a === 'eol' && f && f.doc) { f.eol = f.eol === '\r\n' ? '\n' : '\r\n'; renderEdChrome(); }
+  });
+  // project search
+  $('#psIn').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); IDE.search.q = ''; runSearch(); }
+    else if (e.key === 'Escape') { e.stopPropagation(); if (!IDE.cm.getWrapperElement().hidden) IDE.cm.focus(); }
+  });
+  $('#psIn').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { if ($('#psIn').value.trim().length >= 2 || !$('#psIn').value.trim()) runSearch(); }, 450); });
+  $$('[data-psopt]').forEach(b => b.addEventListener('click', () => { const k = b.dataset.psopt; IDE.search[k] = !IDE.search[k]; IDE.search.q = ''; renderSearch(); runSearch(); }));
+  $('#psRes').addEventListener('click', e => {
+    const f = e.target.closest('[data-psfile]');
+    if (f) { const k = f.dataset.psfile; if (IDE.search.closed.has(k)) IDE.search.closed.delete(k); else IDE.search.closed.add(k); renderSearch(); return; }
+    const h = e.target.closest('[data-pshit]'); if (!h) return;
+    const res = IDE.search.res, hit = res && res.hits[+h.dataset.pshit]; if (!hit) return;
+    $$('#psRes .ps-h.on').forEach(x => x.classList.remove('on')); h.classList.add('on');
+    openFile(joinP(res.root, hit.file), { line: hit.line, col: hit.col, len: hit.len });
+  });
+  // quick open / prompt
+  $('#qoIn').addEventListener('input', () => { QO.sel = 0; renderPalette(); });
+  $('#qoIn').addEventListener('keydown', e => {
+    const n = QO.items.length;
+    if (e.key === 'ArrowDown' && n) { e.preventDefault(); QO.sel = (QO.sel + 1) % n; renderPalette(); }
+    else if (e.key === 'ArrowUp' && n) { e.preventDefault(); QO.sel = (QO.sel - 1 + n) % n; renderPalette(); }
+    else if (e.key === 'Enter') { e.preventDefault(); pickPalette(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closePalette(); }
+  });
+  $('#qoList').addEventListener('click', e => { const b = e.target.closest('[data-qoi]'); if (b) pickPalette(+b.dataset.qoi); });
+  $('#qoBg').addEventListener('mousedown', e => { if (e.target.id === 'qoBg') closePalette(); });
+  // find in file: Enter next, Shift+Enter previous
+  $('#findIn').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); findNext(e.target.value, e.shiftKey); }
+    if (e.key === 'Escape') { $('#findN').textContent = ''; if (!IDE.cm.getWrapperElement().hidden) IDE.cm.focus(); }
+  });
+  $('#findIn').addEventListener('input', () => { $('#findN').textContent = ''; });
 }
 
 /* ---------------- mode ---------------- */
@@ -1283,7 +1920,7 @@ function updatePromptPreview() {
 }
 
 /* ---------------- events ---------------- */
-function closeMenus() { $('#newMenu').hidden = true; $('#skinMenu').hidden = true; $('#pop').hidden = true; }
+function closeMenus() { $('#newMenu').hidden = true; $('#skinMenu').hidden = true; $('#pop').hidden = true; closeIdeMenu(); }
 function bindEvents() {
   document.addEventListener('click', async e => {
     const el = e.target.closest('button,[data-tab],tr[data-month]');
@@ -1380,7 +2017,6 @@ function bindEvents() {
   $('#bellBtn').onclick = () => { const p = $('#pop'); p.hidden = !p.hidden; if (!p.hidden) { S.unread = 0; renderPop(); renderStatus(); } };
   $('#clearN').onclick = () => { S.notifs = []; renderPop(); };
   $('#notifSettings').onclick = () => openSettings('bildirim');
-  $('#refreshTree').onclick = () => { IDE.dirCache = {}; renderTree(); };
   // links inside the markdown view: web links open in the browser, relative links open the file here
   $('#mdView').addEventListener('click', e => {
     const a = e.target.closest('a[href]'); if (!a) return;
@@ -1429,26 +2065,13 @@ function bindEvents() {
     setCfg({ settings: { [f]: e.target.value } }).then(updatePromptPreview);
     if (f === 'name') $$('[data-hitap]').forEach(b => b.classList.toggle('on', b.dataset.hitap === e.target.value.trim()));
   });
-  $('#findIn').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); findNext(e.target.value); } if (e.key === 'Escape') IDE.cm.focus(); });
-  $('#newFileForm').addEventListener('submit', async e => {
-    e.preventDefault();
-    const p = proj(IDE.project); const v = $('#newFileIn').value.trim().replace(/\//g, '\\').replace(/^\\+/, '');
-    if (!p || !v) return;
-    const full = p.path.replace(/[\\/]+$/, '') + '\\' + v;
-    try { await api.invoke('fs:create', full); } catch (err) { toast('Dosya oluşturulamadı', cleanErr(err)); return; }
-    IDE.dirCache = {};
-    // open the folders on the way to the new file
-    let dir = p.path.replace(/[\\/]+$/, '');
-    v.split('\\').slice(0, -1).forEach(seg => { dir += '\\' + seg; IDE.expanded[dir] = true; });
-    $('#newFileIn').value = ''; $('#newFileForm').hidden = true;
-    openFile(full);
-  });
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') { closeMenus(); $('#settings').hidden = true; $('#discover').hidden = true; $('#report').hidden = true; }
   });
   // capture phase: app shortcuts win over the terminal and the code editor
   window.addEventListener('keydown', e => {
-    const sc = SHORTCUTS.find(s => s.run && s.keys === comboOf(e));
+    const combo = comboOf(e);
+    const sc = SHORTCUTS.find(s => s.run && s.keys === combo && (!s.ide || ideKeysOk(e)));
     if (!sc) return;
     e.preventDefault(); e.stopPropagation();
     sc.run();
@@ -1469,14 +2092,17 @@ function bindEvents() {
 }
 function toolbar(a) {
   const cm = IDE.cm;
-  if (a === 'new') { const f = $('#newFileForm'); f.hidden = !f.hidden; if (!f.hidden) $('#newFileIn').focus(); }
+  const f = IDE.files[ist().file], text = !!(f && f.doc);
+  if (a === 'new') newEntry(projRoot(), false);
+  else if (a === 'quick') openPalette('');
+  else if (a === 'psearch') openProjectSearch();
   else if (a === 'save') saveFile();
   else if (a === 'saveall') {
     const list = ist().tabs.filter(isDirty);
     Promise.all(list.map(fp => saveFile(fp))).then(r => { const n = r.filter(Boolean).length; if (n) toast('Kaydedildi', n + ' dosya'); });
   }
-  else if (a === 'undo') { cm.undo(); cm.focus(); }
-  else if (a === 'redo') { cm.redo(); cm.focus(); }
+  else if (a === 'undo') { if (text) { cm.undo(); cm.focus(); } }
+  else if (a === 'redo') { if (text) { cm.redo(); cm.focus(); } }
   else if (a === 'smaller') { IDE.ui.size = Math.max(10, IDE.ui.size - 1); saveIdeUi(); }
   else if (a === 'bigger') { IDE.ui.size = Math.min(22, IDE.ui.size + 1); saveIdeUi(); }
   else if (a === 'ex') { IDE.ui.ex = !IDE.ui.ex; saveIdeUi(); }
@@ -1640,9 +2266,16 @@ const SHORTCUTS = [
   { group: 'Terminaller', keys: 'Ctrl+Shift+Tab', label: 'Önceki terminal', run: () => cycleTabs(-1) },
   { group: 'Terminaller', keys: 'Ctrl+C', label: 'Seçili metni kopyala (seçim yoksa işlemi durdurur)' },
   { group: 'Terminaller', keys: 'Ctrl+V', label: 'Yapıştır' },
+  { group: 'IDE', keys: 'Ctrl+P', label: 'Dosyaya git (hızlı aç)', ide: true, run: () => openPalette('') },
+  { group: 'IDE', keys: 'Ctrl+Shift+F', label: 'Projede ara', ide: true, run: () => openProjectSearch() },
+  { group: 'IDE', keys: 'Ctrl+G', label: 'Satıra git', ide: true, run: () => openPalette(':') },
+  { group: 'IDE', keys: 'Ctrl+W', label: 'Açık dosyayı kapat', ide: true, run: () => { const fp = ist().file; if (fp) closeFile(fp); } },
+  { group: 'IDE', keys: 'Alt+Z', label: 'Satır sarmayı aç / kapat', ide: true, run: () => toggleWrap() },
   { group: 'IDE', keys: 'Ctrl+S', label: 'Dosyayı kaydet' },
-  { group: 'IDE', keys: 'Ctrl+F', label: 'Dosyada ara' },
+  { group: 'IDE', keys: 'Ctrl+F', label: 'Dosyada ara (Enter: sonraki, Shift+Enter: önceki)' },
   { group: 'IDE', keys: 'Ctrl+Z / Ctrl+Y', label: 'Geri al / yinele' },
+  { group: 'IDE', keys: 'F2', label: 'Gezginde seçili öğeyi yeniden adlandır' },
+  { group: 'IDE', keys: 'Delete', label: 'Gezginde seçili öğeyi Geri Dönüşüm Kutusu’na taşı' },
 ];
 
 function kisayolHTML() {
@@ -2166,11 +2799,12 @@ async function init() {
   CFG = r.config; INFO = r.info;
   S.projects = CFG.projects;
   IDE.state = CFG.ide.state || {};
-  IDE.ui = Object.assign({ ex: true, panel: true, size: 13 }, CFG.ide.ui || {});
+  IDE.ui = Object.assign({ ex: true, panel: true, size: 13, wrap: false }, CFG.ide.ui || {});
   applySkin(CFG.settings.skin);
   setupEditor();
   bindEvents();
   initGit();
+  bindIde();
   applyPanels();
   renderUsage();
   await refreshAllHistory();
