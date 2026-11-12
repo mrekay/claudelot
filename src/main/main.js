@@ -921,6 +921,15 @@ function registerIpc() {
   ipcMain.handle('project:addPath', (_e, p) => (fs.existsSync(p) ? addProject(p) : null));
   ipcMain.handle('project:open', (_e, p) => { if (insideProject(p)) shell.openPath(p); });
 
+  // files copied in Explorer: the clipboard holds a file list, not text. Read it the way
+  // Windows Terminal pastes it (full paths). Electron has no API for CF_HDROP.
+  ipcMain.handle('clipboard:files', () => new Promise(res => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      '[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Clipboard -Format FileDropList | ForEach-Object { $_.FullName }'],
+    { encoding: 'utf8', windowsHide: true, timeout: 5000 },
+    (err, out) => res(err ? [] : String(out).split(/\r?\n/).map(s => s.trim()).filter(Boolean)));
+  }));
+
   // Claude Code's own history retention (cleanupPeriodDays in ~/.claude/settings.json).
   // Only this key is touched; a file that does not parse is left alone.
   const USER_SETTINGS = path.join(CLAUDE_DIR, 'settings.json');

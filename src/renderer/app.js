@@ -1343,6 +1343,17 @@ function bindEvents() {
   document.addEventListener('input', e => {
     if (e.target.id === 'cModelCustom') setCfg({ settings: { claude: { model: e.target.value.trim() } } }).then(renderStatus);
   });
+  // Ctrl+V in a terminal with files copied in Explorer: paste their paths (like Windows Terminal)
+  document.addEventListener('paste', async e => {
+    if (!e.target.closest || !e.target.closest('.xterm')) return;
+    const dt = e.clipboardData;
+    if (dt && dt.getData('text/plain')) return; // normal text: xterm handles it
+    const t = S.tabs.find(x => x.el && x.el.contains(e.target));
+    if (!t || !t.term) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    const files = await api.invoke('clipboard:files').catch(() => []);
+    if (files.length) t.term.paste(files.map(f => (/\s/.test(f) ? `"${f}"` : f)).join(' '));
+  }, true);
   document.addEventListener('click', async e => {
     const b = e.target.closest('[data-ceffort],[data-cpm],[data-cset],[data-cleanup]'); if (!b) return;
     const c = CFG.settings.claude || {};
