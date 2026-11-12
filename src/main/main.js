@@ -966,6 +966,8 @@ function registerIpc() {
     if (!fs.existsSync(file)) await fsp.writeFile(file, '', 'utf8');
     return true;
   });
+  // quick open, project search, rename / new folder / Recycle Bin, git colours, folder watcher
+  require('./ide')({ ipcMain, shell, insideProject, send, isProjectRoot: p => config.projects.some(pr => norm(pr.path) === norm(p)) });
 }
 function addProject(p) {
   const full = path.resolve(p);
