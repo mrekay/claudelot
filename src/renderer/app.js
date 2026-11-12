@@ -490,14 +490,20 @@ function mirrorTerm(t) {
   new ResizeObserver(() => fitMirrorFont(t)).observe(box);
   return term;
 }
-// keep the mirrored screen (the outside window's size) inside the pane by scaling the font
-function fitMirrorFont(t) {
+// The mirrored screen keeps the outside window's columns and rows, so scale the font
+// both ways: down when it overflows the pane, up until it fills the pane.
+const MIRROR_FONT = [8, 24];
+function fitMirrorFont(t, again) {
   if (!t.term || !t.el.offsetParent) return;
   const box = t.el.querySelector('.watch-term'), scr = box.querySelector('.xterm-screen');
   if (!scr || !scr.offsetWidth) return;
   const ratio = Math.min((box.clientWidth - 16) / scr.offsetWidth, (box.clientHeight - 8) / scr.offsetHeight);
-  const next = Math.max(8, Math.min(13, Math.floor(t.fontSize * ratio * 2) / 2));
-  if (Math.abs(next - t.fontSize) >= 0.5 && (ratio < 1 || t.fontSize < 13)) { t.fontSize = next; t.term.options.fontSize = next; }
+  const next = Math.max(MIRROR_FONT[0], Math.min(MIRROR_FONT[1], Math.floor(t.fontSize * ratio * 2) / 2));
+  if (Math.abs(next - t.fontSize) >= 0.5) {
+    t.fontSize = next; t.term.options.fontSize = next;
+    // the cell size settles after the next paint; check once more
+    if (!again) requestAnimationFrame(() => fitMirrorFont(t, true));
+  }
 }
 function onMirrorFrame(t, f) {
   const first = t.mirrorState !== 'live';
