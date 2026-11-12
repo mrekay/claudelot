@@ -12,7 +12,10 @@
 <body>
 <div class="window" id="win">
   <header class="titlebar">
-    <div class="brand"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="2" width="16" height="4" rx="1.5" fill="var(--accent)"/><rect x="1" y="7.5" width="12" height="4" rx="1.5" fill="var(--accent)" opacity=".7"/><rect x="1" y="13" width="8" height="4" rx="1.5" fill="var(--warn)"/></svg>Claudelot</div>
+    <div class="tb-left">
+      <div class="brand"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="2" width="16" height="4" rx="1.5" fill="var(--accent)"/><rect x="1" y="7.5" width="12" height="4" rx="1.5" fill="var(--accent)" opacity=".7"/><rect x="1" y="13" width="8" height="4" rx="1.5" fill="var(--warn)"/></svg>Claudelot</div>
+      <button class="git-btn" id="gitBtn" title="Git ve GitHub (Ctrl+Shift+G)" aria-haspopup="true" aria-expanded="false"><i class="fa-brands fa-git-alt"></i><span id="gitBtnLabel">Git</span><b class="git-btn-n" id="gitBtnN" hidden></b><i class="fa-solid fa-chevron-down gb-car"></i></button>
+    </div>
     <div class="mode-pill" role="tablist" aria-label="Mod">
       <button role="tab" data-mode="claude" class="on" title="Claude modu (Ctrl+1)"><i class="fa-solid fa-terminal"></i>Claude<span class="pill-b" id="pillBadge" hidden>0</span></button>
       <button role="tab" data-mode="ide" title="IDE modu (Ctrl+2)"><i class="fa-solid fa-code"></i>IDE</button>
@@ -116,6 +119,20 @@
   <div class="term-host" id="termHost"></div>
 
   <!-- popovers -->
+  <div class="git-panel" id="gitPanel" hidden>
+    <div class="seg" role="tablist" aria-label="Kaynak">
+      <button role="tab" data-gtab="github"><i class="fa-brands fa-github"></i>GitHub</button>
+      <button role="tab" data-gtab="git"><i class="fa-brands fa-git-alt"></i>Git</button>
+    </div>
+    <div class="gp-proj">
+      <button class="gp-sel" id="gitProjBtn" aria-haspopup="listbox" aria-expanded="false"><i class="fa-regular fa-folder"></i><span class="gp-sel-tx"><b id="gitProjName">Proje seç</b><small id="gitProjPath"></small></span><i class="fa-solid fa-chevron-down"></i></button>
+      <div class="gp-drop" id="gitProjDrop" hidden>
+        <div class="sp-search"><i class="fa-solid fa-magnifying-glass"></i><input id="gitProjQ" placeholder="Proje ara…" autocomplete="off" spellcheck="false" aria-label="Proje ara"></div>
+        <div class="sp-list" id="gitProjList" role="listbox" aria-label="Projeler"></div>
+      </div>
+    </div>
+    <div class="gp-body" id="gitBody"></div>
+  </div>
   <div class="skin-menu" id="skinMenu" role="menu" hidden></div>
   <div class="new-menu" id="newMenu" role="menu" hidden></div>
   <div class="popover" id="pop" hidden>
@@ -140,6 +157,13 @@
     <div class="settings discover" role="dialog" aria-modal="true" aria-labelledby="discTitle">
       <div class="set-h"><span id="discTitle">Proje ekle</span><button class="ghost" id="discClose">Kapat <i class="fa-solid fa-xmark"></i></button></div>
       <div class="set-body" id="discBody"></div>
+    </div>
+  </div>
+  <div class="settings-bg" id="gitWin" hidden>
+    <div class="settings gitwin" role="dialog" aria-modal="true" aria-labelledby="gwTitle">
+      <div class="set-h"><span id="gwTitle" class="gw-title"></span><span class="gw-acts"><button class="ghost" id="gwRefresh" title="Yenile"><i class="fa-solid fa-arrows-rotate"></i> Yenile</button><button class="ghost" id="gwClose">Kapat <i class="fa-solid fa-xmark"></i></button></span></div>
+      <nav class="set-nav" id="gwNav"></nav>
+      <div class="gw-main"><div class="gw-list" id="gwList"></div><div class="gw-detail" id="gwDetail"></div></div>
     </div>
   </div>
   <div class="toasts" id="toasts" aria-live="polite"></div>

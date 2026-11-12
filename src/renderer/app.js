@@ -730,6 +730,7 @@ function trackAttention() {
 function renderAll() {
   trackAttention();
   renderSide(); renderTabs(); renderQueue(); renderStatus(); renderPanelBadges();
+  if (typeof GIT !== 'undefined' && projectHere() !== GIT.btnPid) scheduleGitBtn(true);
   if (S.mode === 'ide') renderIde();
   if (!$('#pop').hidden) renderPop();
 }
@@ -1567,6 +1568,7 @@ const SHORTCUTS = [
   { group: 'Genel', keys: 'Ctrl+Shift+O', label: 'Karşılama ekranı', run: () => api.send('app:welcome') },
   { group: 'Genel', keys: 'Ctrl+,', label: 'Ayarlar', run: () => openSettings() },
   { group: 'Genel', keys: 'Ctrl+Shift+R', label: 'Aylık kullanım raporu', run: () => openReport() },
+  { group: 'Genel', keys: 'Ctrl+Shift+G', label: 'Git / GitHub paneli', run: () => toggleGitPanel() },
   { group: 'Genel', keys: 'F1', label: 'Kısayol listesi', run: () => openSettings('kisayol') },
   { group: 'Paneller', keys: 'Ctrl+Shift+E', label: 'Projeler paneli (IDE: dosya gezgini)', run: () => togglePanel('side') },
   { group: 'Paneller', keys: 'Ctrl+Shift+D', label: 'Karar paneli (IDE: Claude paneli)', run: () => togglePanel('queue') },
@@ -1590,6 +1592,362 @@ function kisayolHTML() {
     + '<p class="set-note">Uygulama kısayolları terminal ve kod düzenleyici açıkken de çalışır. Claude Code\'un kendi kısayolları (Ctrl+B, Ctrl+R, Shift+Tab vb.) terminale gitmeye devam eder.</p>';
 }
 
+/* ---------------- git / GitHub ----------------
+   Title-bar button → drop-down panel (GitHub | Git tabs, project picker, last commits)
+   → "Detaylar" window (changes, history, stash, diffs). Read-only. */
+const GIT = { tab: 'git', pid: null, ov: null, gh: null, err: '', loading: false, token: 0, drop: { sel: 0, view: [] }, head: {}, btnTimer: null, btnAt: 0, btnPid: null };
+const GW = { pid: null, view: 'history', ov: null, commits: [], more: true, sel: null, ltok: 0, dtok: 0 };
+const gitProj = () => proj(GIT.pid);
+const me = c => { const id = (CFG && CFG.identity) || {}; return !!((id.email && c.email && c.email.toLowerCase() === id.email.toLowerCase()) || (id.name && c.author === id.name)); };
+const initials = n => String(n || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toLocaleUpperCase('tr') || '?';
+const isoMs = s => (s ? Date.parse(s) : 0);
+function avatarHTML(c) {
+  if (c.claude) return `<span class="av claude" title="Claude ile yapıldı (${esc(c.author)})"><i class="fa-solid fa-robot"></i></span>`;
+  return `<span class="av ${me(c) ? 'me' : ''}" title="${esc(c.author)} &lt;${esc(c.email)}&gt;">${esc(initials(c.author))}</span>`;
+}
+const whoText = c => (c.claude ? 'Claude' : me(c) ? 'Sen' : c.author);
+function pushIcon(c) {
+  if (c.pushed === true) return '<i class="pst on fa-solid fa-cloud" title="Push edildi"></i>';
+  if (c.pushed === false) return '<i class="pst off fa-solid fa-arrow-up-from-bracket" title="Henüz push edilmedi"></i>';
+  return '<i class="pst na fa-solid fa-cloud" title="Bu dalın uzak karşılığı (upstream) yok"></i>';
+}
+
+/* ---- title-bar button: branch + unpushed count of the project in front ---- */
+function scheduleGitBtn(now) {
+  clearTimeout(GIT.btnTimer);
+  const pid = projectHere();
+  const wait = now || pid !== GIT.btnPid ? 120 : Math.max(800, 5000 - (Date.now() - GIT.btnAt));
+  GIT.btnTimer = setTimeout(updateGitBtn, wait);
+}
+async function updateGitBtn() {
+  const pid = projectHere(), p = proj(pid);
+  GIT.btnPid = pid; GIT.btnAt = Date.now();
+  let h = { repo: false };
+  if (p) { try { h = await api.invoke('git:head', p.path); } catch (_) {} }
+  if (pid !== projectHere()) return;
+  GIT.head[pid] = h;
+  $('#gitBtnLabel').textContent = h.repo ? (h.detached ? 'detached' : h.branch) : 'Git';
+  $('#gitBtnN').hidden = !(h.repo && h.ahead);
+  $('#gitBtnN').textContent = '↑' + (h.ahead || 0);
+  $('#gitBtn').title = p ? `${p.name}${h.repo ? ` · ${h.branch}${h.ahead ? ` · ${h.ahead} commit push edilmedi` : ''}${h.dirty ? ` · ${h.dirty} değişiklik` : ''}` : ' · git deposu değil'}\nGit ve GitHub (Ctrl+Shift+G)` : 'Git ve GitHub (Ctrl+Shift+G)';
+}
+
+/* ---- panel ---- */
+function openGitPanel() {
+  closeMenus(); closeStartPanel();
+  GIT.pid = projectHere();
+  $('#gitPanel').hidden = false;
+  $('#gitBtn').setAttribute('aria-expanded', 'true');
+  renderGitPanel();
+  loadGit();
+}
+function closeGitPanel() {
+  $('#gitPanel').hidden = true; closeGitDrop();
+  $('#gitBtn').setAttribute('aria-expanded', 'false');
+}
+const toggleGitPanel = () => ($('#gitPanel').hidden ? openGitPanel() : closeGitPanel());
+function setGitTab(t) {
+  GIT.tab = t;
+  setCfg({ settings: { gitTab: t } });
+  renderGitPanel();
+  loadGit();
+}
+async function loadGit(force) {
+  const p = gitProj(); if (!p) { renderGitBody(); return; }
+  const tok = ++GIT.token, tab = GIT.tab;
+  GIT.loading = true; GIT.err = '';
+  if (tab === 'git' && (!GIT.ov || GIT.ov._pid !== p.id)) GIT.ov = null;
+  if (tab === 'github' && (!GIT.gh || GIT.gh._pid !== p.id)) GIT.gh = null;
+  renderGitBody();
+  try {
+    if (tab === 'git') { const ov = await api.invoke('git:overview', p.path); ov._pid = p.id; if (tok === GIT.token) GIT.ov = ov; }
+    else { const gh = await api.invoke('github:info', p.path, !!force); gh._pid = p.id; if (tok === GIT.token) GIT.gh = gh; }
+  } catch (e) { if (tok === GIT.token) GIT.err = cleanErr(e); }
+  if (tok !== GIT.token) return;
+  GIT.loading = false;
+  renderGitBody();
+  if (tab === 'git') scheduleGitBtn(true);
+}
+function renderGitPanel() {
+  $$('#gitPanel [data-gtab]').forEach(b => { const on = b.dataset.gtab === GIT.tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
+  const p = gitProj();
+  $('#gitProjName').textContent = p ? p.name : 'Proje seç';
+  $('#gitProjPath').textContent = p ? p.path : (S.projects.length ? 'Listeden bir proje seç' : 'Henüz proje yok');
+  renderGitBody();
+}
+function renderGitBody() {
+  const p = gitProj(), b = $('#gitBody');
+  if (!p) { b.innerHTML = '<div class="gp-note"><i class="fa-regular fa-folder-open"></i>Üstten bir proje seç.</div>'; return; }
+  if (GIT.err) { b.innerHTML = `<div class="gp-note"><i class="fa-solid fa-triangle-exclamation"></i>${esc(GIT.err)}<br><button class="btn" data-gitreload>Tekrar dene</button></div>`; return; }
+  const d = GIT.tab === 'git' ? GIT.ov : GIT.gh;
+  if (!d) { b.innerHTML = '<div class="gp-note"><i class="fa-solid fa-circle-notch fa-spin"></i>Yükleniyor…</div>'; return; }
+  b.innerHTML = GIT.tab === 'git' ? gitBodyHTML(d) : githubBodyHTML(d);
+}
+function branchLine(ov) {
+  const n = ov.staged.length + ov.unstaged.length + ov.untracked.length + ov.conflicted.length;
+  return `<div class="gp-branch"><i class="fa-solid fa-code-branch ic-mut"></i><b>${esc(ov.detached ? 'detached HEAD' : ov.branch)}</b>
+    ${ov.upstream ? `<span class="gchip" title="Uzak dal">→ ${esc(ov.upstream)}</span>` : '<span class="gchip warn" title="Bu dal henüz bir uzak dala bağlı değil">upstream yok</span>'}
+    ${ov.ahead ? `<span class="gchip warn" title="Push edilmemiş commit">↑ ${ov.ahead}</span>` : ''}
+    ${ov.behind ? `<span class="gchip acc" title="Uzakta olup sende olmayan commit (son fetch'e göre)">↓ ${ov.behind}</span>` : ''}
+    ${ov.conflicted.length ? `<span class="gchip bad">${ov.conflicted.length} çakışma</span>` : ''}
+    ${n ? `<span class="gchip acc">${n} değişiklik</span>` : '<span class="gchip ok">temiz</span>'}
+    ${ov.stashes.length ? `<span class="gchip">${ov.stashes.length} stash</span>` : ''}</div>`;
+}
+function gitBodyHTML(ov) {
+  if (!ov.repo) return '<div class="gp-note"><i class="fa-brands fa-git-alt"></i>Bu proje bir git deposu değil.</div>';
+  const rows = ov.commits.map(c => `<button class="gc" data-gitc="${c.hash}" title="${esc(c.subject)}&#10;${esc(c.author)} · ${new Date(c.at).toLocaleString('tr-TR')}">
+      ${avatarHTML(c)}<span class="gc-tx"><b>${esc(c.subject)}</b><span>${esc(whoText(c))} · ${rel(c.at)} · <code>${c.short}</code></span></span>${pushIcon(c)}</button>`).join('');
+  return branchLine(ov) +
+    `<div class="gp-h">Son commitler <button class="ghost" data-gitreload title="Yenile"><i class="fa-solid fa-arrows-rotate"></i></button></div>` +
+    (rows || '<div class="gp-note">Henüz commit yok.</div>') +
+    `<button class="gp-detail-btn" data-gwopen="changes"><i class="fa-solid fa-up-right-from-square"></i>Detaylar <small>değişiklikler, stash, geçmiş</small></button>`;
+}
+function runIcon(r) {
+  if (r.status !== 'completed') return '<i class="fa-solid fa-circle-notch fa-spin ic-run" title="Çalışıyor"></i>';
+  if (r.conclusion === 'success') return '<i class="fa-solid fa-circle-check ic-ok" title="Başarılı"></i>';
+  if (r.conclusion === 'failure' || r.conclusion === 'timed_out') return '<i class="fa-solid fa-circle-xmark ic-bad" title="Başarısız"></i>';
+  return `<i class="fa-solid fa-ban ic-mut" title="${esc(r.conclusion || '')}"></i>`;
+}
+function githubBodyHTML(g) {
+  if (!g.github) return `<div class="gp-note"><i class="fa-brands fa-github"></i>Bu projenin GitHub uzak deposu yok.${g.remote ? `<br><code>${esc(g.remote)}</code>` : ''}</div>`;
+  const open = `<button class="btn" data-ghurl="${esc(g.github.url)}"><i class="fa-brands fa-github"></i> GitHub'da aç</button>`;
+  const foot = `<div class="gh-foot"><span>${g.via === 'gh' ? `<i class="fa-solid fa-key"></i> GitHub CLI${g.login ? ' · ' + esc(g.login) : ''}` : '<i class="fa-solid fa-globe"></i> Herkese açık API (özel depolar görünmez)'}</span><button class="ghost" data-gitreload="force"><i class="fa-solid fa-arrows-rotate"></i> Yenile</button></div>`;
+  if (!g.repo) {
+    const why = g.limited ? 'GitHub API sınırına ulaşıldı (saatte 60 istek). GitHub CLI (gh) ile giriş yaparsan sınır kalkar.'
+      : g.repoStatus === 404 ? 'Depo bulunamadı ya da özel. Özel depoları görmek için GitHub CLI (gh) kurup <code>gh auth login</code> ile giriş yap.'
+      : esc(g.repoError || 'GitHub\'a ulaşılamadı.');
+    return `<div class="gp-note"><i class="fa-brands fa-github"></i><b>${esc(g.github.owner + '/' + g.github.repo)}</b><br>${why}<br>${open}</div>` + foot;
+  }
+  const r = g.repo;
+  const list = (title, items, row, empty) => `<div class="gp-h">${title}</div>` + (items.length ? items.map(row).join('') : `<div class="gp-note" style="padding:6px">${empty}</div>`);
+  return `<div class="gh-card">
+      <button class="gh-link" data-ghurl="${esc(r.url)}">${r.private ? '<i class="fa-solid fa-lock ic-mut"></i> ' : ''}${esc(r.fullName)}</button>
+      ${r.description ? `<p>${esc(r.description)}</p>` : '<p></p>'}
+      <div class="gh-stats"><span><i class="fa-regular fa-star"></i>${r.stars}</span><span><i class="fa-solid fa-code-fork"></i>${r.forks}</span><span><i class="fa-solid fa-code-branch"></i>${esc(r.defaultBranch)}</span>${r.language ? `<span><i class="fa-solid fa-circle ic-acc" style="font-size:8px"></i>${esc(r.language)}</span>` : ''}${r.pushedAt ? `<span><i class="fa-regular fa-clock"></i>son push ${rel(isoMs(r.pushedAt))}</span>` : ''}</div>
+    </div>` +
+    list(`Açık pull request'ler${g.pulls.length ? ` (${g.pulls.length})` : ''}`, g.pulls, x => `<button class="gh-row" data-ghurl="${esc(x.url)}" title="${esc(x.title)}"><i class="fa-solid fa-code-pull-request ${x.draft ? 'ic-mut' : 'ic-ok'}"></i><span class="gc-tx"><b>${esc(x.title)}</b><span>#${x.n} · ${esc(x.user)}${x.branch ? ' · ' + esc(x.branch) : ''}${x.draft ? ' · taslak' : ''}</span></span><time>${rel(isoMs(x.at))}</time></button>`, 'Açık pull request yok.') +
+    list('Açık issue\'lar', g.issues, x => `<button class="gh-row" data-ghurl="${esc(x.url)}" title="${esc(x.title)}"><i class="fa-regular fa-circle-dot ic-ok"></i><span class="gc-tx"><b>${esc(x.title)}</b><span>#${x.n} · ${esc(x.user)}${x.comments ? ` · ${x.comments} yorum` : ''}</span></span><time>${rel(isoMs(x.at))}</time></button>`, 'Açık issue yok.') +
+    list('Actions', g.runs, x => `<button class="gh-row" data-ghurl="${esc(x.url)}" title="${esc(x.title)}">${runIcon(x)}<span class="gc-tx"><b>${esc(x.name)}</b><span>${esc(x.title)} · ${esc(x.branch || '')}</span></span><time>${rel(isoMs(x.at))}</time></button>`, 'Workflow çalışması yok.') +
+    `<div style="margin-top:10px">${open}</div>` + foot;
+}
+
+/* ---- project picker ---- */
+function openGitDrop() {
+  $('#gitProjDrop').hidden = false; $('#gitProjBtn').setAttribute('aria-expanded', 'true');
+  $('#gitProjQ').value = ''; GIT.drop.sel = Math.max(0, S.projects.findIndex(p => p.id === GIT.pid));
+  renderGitDrop(true); $('#gitProjQ').focus();
+}
+function closeGitDrop() { $('#gitProjDrop').hidden = true; $('#gitProjBtn').setAttribute('aria-expanded', 'false'); }
+function renderGitDrop(keepOrder) {
+  const q = lowerTr($('#gitProjQ').value.trim());
+  GIT.drop.view = S.projects.filter(p => !q || lowerTr(p.name).includes(q) || lowerTr(p.path).includes(q));
+  if (!keepOrder) GIT.drop.sel = 0;
+  GIT.drop.sel = Math.min(GIT.drop.sel, Math.max(0, GIT.drop.view.length - 1));
+  $('#gitProjList').innerHTML = GIT.drop.view.length ? GIT.drop.view.map((p, i) => {
+    const tabs = S.tabs.filter(t => t.projectId === p.id).length;
+    return `<div class="sp-row ${i === GIT.drop.sel ? 'sel' : ''}" data-gitproj="${p.id}" role="option" aria-selected="${p.id === GIT.pid}" title="${esc(p.path)}">
+      <div class="sp-info"><b>${esc(p.name)}${tabs ? ` <span class="sp-live">${tabs} açık</span>` : ''}</b><span>${esc(p.path)}</span></div>
+      <span class="ck">${p.id === GIT.pid ? '<i class="fa-solid fa-check"></i>' : ''}</span></div>`;
+  }).join('') : `<div class="sp-empty">“${esc($('#gitProjQ').value)}” ile eşleşen proje yok.</div>`;
+  const el = $('#gitProjList .sp-row.sel'); if (el) el.scrollIntoView({ block: 'nearest' });
+}
+function pickGitProject(pid) {
+  closeGitDrop();
+  if (pid === GIT.pid) return;
+  GIT.pid = pid; GIT.ov = null; GIT.gh = null;
+  renderGitPanel(); loadGit();
+}
+
+/* ---- details window ---- */
+async function openGitWin(view, hash) {
+  const p = gitProj(); if (!p) return;
+  const fresh = GW.pid !== p.id;
+  Object.assign(GW, { pid: p.id, view: view || GW.view, sel: hash ? { type: 'commit', hash } : (fresh ? null : GW.sel) });
+  if (fresh) { GW.commits = []; GW.more = true; GW.ov = GIT.ov && GIT.ov._pid === p.id ? GIT.ov : null; }
+  closeGitPanel();
+  $('#gitWin').hidden = false;
+  renderGw();
+  await reloadGw(!GW.ov || !fresh);
+  if (GW.sel) showGwDetail();
+}
+async function reloadGw(withOverview) {
+  const p = proj(GW.pid); if (!p) return;
+  const tok = ++GW.ltok;
+  try {
+    const [ov, log] = await Promise.all([
+      withOverview || !GW.ov ? api.invoke('git:overview', p.path) : Promise.resolve(GW.ov),
+      api.invoke('git:log', p.path, 0, 60).catch(() => []),
+    ]);
+    if (tok !== GW.ltok) return;
+    ov._pid = p.id; GW.ov = ov; GW.commits = log; GW.more = log.length === 60;
+  } catch (e) { if (tok === GW.ltok) toast('Git okunamadı', cleanErr(e)); }
+  renderGw();
+}
+async function moreGwHistory() {
+  const p = proj(GW.pid); if (!p) return;
+  const more = await api.invoke('git:log', p.path, GW.commits.length, 100).catch(() => []);
+  GW.commits = GW.commits.concat(more); GW.more = more.length === 100;
+  renderGwList();
+}
+function renderGw() {
+  const p = proj(GW.pid), ov = GW.ov;
+  $('#gwTitle').innerHTML = `<i class="fa-brands fa-git-alt" style="color:#f05133"></i>${esc(p ? p.name : '')}${ov && ov.repo ? ` <small><i class="fa-solid fa-code-branch"></i> ${esc(ov.branch)}</small>` : ''}`;
+  const n = ov && ov.repo ? ov.staged.length + ov.unstaged.length + ov.untracked.length + ov.conflicted.length : 0;
+  const tabs = [['changes', 'fa-solid fa-file-pen', 'Değişiklikler', n], ['history', 'fa-solid fa-clock-rotate-left', 'Geçmiş', ''], ['stash', 'fa-solid fa-box-archive', 'Stash', ov && ov.repo ? ov.stashes.length : '']];
+  $('#gwNav').innerHTML = tabs.map(([k, ic, label, c]) => `<button class="set-tab ${GW.view === k ? 'on' : ''}" data-gwview="${k}"><i class="${ic}" style="width:18px"></i> ${label}${c !== '' ? `<span class="n">${c}</span>` : ''}</button>`).join('') +
+    (ov && ov.repo ? `<div style="padding:12px 10px 0;font-size:11.5px;color:var(--muted);display:grid;gap:6px">${branchLine(ov).replace('gp-branch', 'gp-branch" style="flex-direction:column;align-items:flex-start')}</div>` : '');
+  renderGwList();
+  if (!GW.sel) $('#gwDetail').innerHTML = `<div class="gw-empty"><i class="fa-regular fa-hand-pointer"></i>Soldan bir ${GW.view === 'changes' ? 'dosya' : GW.view === 'stash' ? 'stash' : 'commit'} seç.</div>`;
+}
+const dayLabel = ms => new Date(ms).toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+function renderGwList() {
+  const ov = GW.ov, el = $('#gwList');
+  if (!ov) { el.innerHTML = '<div class="gw-empty"><i class="fa-solid fa-circle-notch fa-spin"></i>Yükleniyor…</div>'; return; }
+  if (!ov.repo) { el.innerHTML = '<div class="gw-empty"><i class="fa-brands fa-git-alt"></i>Bu proje bir git deposu değil.</div>'; return; }
+  const sel = GW.sel || {};
+  if (GW.view === 'changes') {
+    const grp = (title, kind, files) => files.length ? `<div class="gw-grp"><span>${title}</span><span>${files.length}</span></div>` + files.map(f => {
+      const on = sel.type === 'file' && sel.kind === kind && sel.path === f.path;
+      return `<button class="gf ${on ? 'on' : ''}" data-gwfile="${esc(f.path)}" data-kind="${kind}" title="${esc(f.from ? f.from + ' → ' + f.path : f.path)}"><span class="fcode ${f.code === '?' ? 'Q' : esc(f.code)}">${f.code === '?' ? 'U' : esc(f.code)}</span><span class="fp"><bdi>${esc(f.path)}</bdi></span><span></span></button>`;
+    }).join('') : '';
+    const html = grp('Çakışmalar', 'unstaged', ov.conflicted) + grp('Hazırlanan (staged)', 'staged', ov.staged) + grp('Hazırlanmayan', 'unstaged', ov.unstaged) + grp('Takip edilmeyen', 'untracked', ov.untracked);
+    el.innerHTML = html || '<div class="gw-empty"><i class="fa-solid fa-check"></i>Çalışma ağacı temiz, bekleyen değişiklik yok.</div>';
+  } else if (GW.view === 'stash') {
+    el.innerHTML = ov.stashes.length ? ov.stashes.map(s => `<button class="gw-c ${sel.type === 'stash' && sel.ref === s.ref ? 'on' : ''}" data-gwstash="${esc(s.ref)}"><span class="av"><i class="fa-solid fa-box-archive"></i></span><span class="gc-tx"><b>${esc(s.msg)}</b><span>${esc(s.ref)} · ${rel(s.at)}</span></span><span></span></button>`).join('')
+      : '<div class="gw-empty"><i class="fa-solid fa-box-open"></i>Stash yok.</div>';
+  } else {
+    let day = '', html = '';
+    for (const c of GW.commits) {
+      const d = dayLabel(c.at);
+      if (d !== day) { day = d; html += `<div class="gw-day"><i class="fa-solid fa-code-commit"></i>${esc(d)}</div>`; }
+      html += `<button class="gw-c ${sel.type === 'commit' && sel.hash === c.hash ? 'on' : ''}" data-gwc="${c.hash}" title="${esc(c.subject)}">${avatarHTML(c)}<span class="gc-tx"><b>${esc(c.subject)}</b><span>${esc(whoText(c))} · ${rel(c.at)} · <code>${c.short}</code></span></span>${pushIcon(c)}</button>`;
+    }
+    el.innerHTML = (html || '<div class="gw-empty"><i class="fa-solid fa-code-commit"></i>Henüz commit yok.</div>') + (GW.more && GW.commits.length ? '<button class="btn gw-more" data-gwmore>Daha eski commitler</button>' : '');
+  }
+}
+async function showGwDetail() {
+  const p = proj(GW.pid), s = GW.sel, box = $('#gwDetail'); if (!p || !s) return;
+  const tok = ++GW.dtok;
+  box.innerHTML = '<div class="gw-empty"><i class="fa-solid fa-circle-notch fa-spin"></i>Yükleniyor…</div>';
+  try {
+    if (s.type === 'commit') {
+      const c = await api.invoke('git:show', p.path, s.hash);
+      if (tok !== GW.dtok) return;
+      const add = c.files.reduce((n, f) => n + (f.add || 0), 0), del = c.files.reduce((n, f) => n + (f.del || 0), 0);
+      box.innerHTML = `<div class="gw-ch"><h3>${esc(c.subject)}</h3>${c.body ? `<pre>${esc(c.body)}</pre>` : ''}
+        <div class="gw-meta"><span class="who">${avatarHTML(c)}${esc(c.author)}</span><span>${new Date(c.at).toLocaleString('tr-TR', { dateStyle: 'long', timeStyle: 'short' })}</span>
+        <code title="Tam hash: ${c.hash}">${c.short}</code>${c.parents.length ? `<span>üst: ${c.parents.map(h => `<code>${h.slice(0, 7)}</code>`).join(' ')}</span>` : ''}
+        ${c.claude ? '<span class="gchip acc"><i class="fa-solid fa-robot"></i> Claude ile</span>' : ''}
+        ${c.pushed === true ? '<span class="gchip ok"><i class="fa-solid fa-cloud"></i> push edildi</span>' : c.pushed === false ? '<span class="gchip warn"><i class="fa-solid fa-arrow-up-from-bracket"></i> push edilmedi</span>' : ''}
+        ${c.refs ? `<span class="gchip">${esc(c.refs)}</span>` : ''}</div></div>
+        <div class="gw-files">${c.files.length} dosya değişti · <span class="nums"><span class="a">+${add}</span><span class="d">−${del}</span></span></div>` + diffHTML(c.patch);
+    } else if (s.type === 'stash') {
+      const r = await api.invoke('git:stash', p.path, s.ref);
+      if (tok !== GW.dtok) return;
+      const st = (GW.ov.stashes || []).find(x => x.ref === s.ref) || {};
+      box.innerHTML = `<div class="gw-ch"><h3>${esc(st.msg || s.ref)}</h3><div class="gw-meta"><code>${esc(s.ref)}</code>${st.at ? `<span>${new Date(st.at).toLocaleString('tr-TR', { dateStyle: 'long', timeStyle: 'short' })}</span>` : ''}</div></div>
+        <div class="gw-files">${r.files.length} dosya</div>` + diffHTML(r.patch);
+    } else {
+      const r = await api.invoke('git:diff', p.path, s.kind, s.path);
+      if (tok !== GW.dtok) return;
+      const head = `<div class="gw-ch"><h3 style="font:600 14px var(--f-mono)">${esc(s.path)}</h3><div class="gw-meta">${{ staged: 'Hazırlanan değişiklik (staged)', unstaged: 'Hazırlanmayan değişiklik', untracked: 'Yeni dosya, git takip etmiyor' }[s.kind]}</div></div>`;
+      if (r.untracked) {
+        box.innerHTML = head + (r.dir ? '<div class="diff-note">Klasör.</div>' : r.binary ? '<div class="diff-note">İkili (binary) dosya.</div>' : r.big ? '<div class="diff-note">Dosya çok büyük (2 MB üstü).</div>'
+          : fileBlock({ path: s.path, lines: r.text.replace(/\r?\n$/, '').split(/\r?\n/).map((l, i) => ({ t: 'add', n: i + 1, text: l })), add: r.text.split(/\r?\n/).length, del: 0 }));
+      } else box.innerHTML = head + (r.patch.text.trim() ? diffHTML(r.patch) : '<div class="diff-note">Fark yok (yalnızca izin ya da satır sonu değişmiş olabilir).</div>');
+    }
+  } catch (e) { if (tok === GW.dtok) box.innerHTML = `<div class="gw-empty"><i class="fa-solid fa-triangle-exclamation"></i>${esc(cleanErr(e))}</div>`; }
+}
+
+/* unified diff → per-file blocks with old/new line numbers */
+function parseDiff(text) {
+  const files = []; let f = null, o = 0, n = 0;
+  for (const line of text.split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      const m = line.match(/^diff --git a\/(.*) b\/(.*)$/);
+      f = { path: m ? m[2] : line.slice(11), from: m ? m[1] : '', lines: [], add: 0, del: 0, note: '' };
+      files.push(f); continue;
+    }
+    if (!f) continue;
+    if (line.startsWith('@@')) { const m = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)/); if (m) { o = +m[1]; n = +m[2]; } f.lines.push({ t: 'hunk', text: line }); continue; }
+    if (!f.lines.length) {
+      if (line.startsWith('Binary files')) f.note = 'İkili (binary) dosya değişti.';
+      else if (line.startsWith('new file')) f.state = 'yeni';
+      else if (line.startsWith('deleted file')) f.state = 'silindi';
+      else if (line.startsWith('rename from')) f.state = 'yeniden adlandırıldı';
+      continue;
+    }
+    if (line[0] === '+') { f.lines.push({ t: 'add', n: n++, text: line.slice(1) }); f.add++; }
+    else if (line[0] === '-') { f.lines.push({ t: 'del', o: o++, text: line.slice(1) }); f.del++; }
+    else if (line[0] === ' ') f.lines.push({ t: 'ctx', o: o++, n: n++, text: line.slice(1) });
+    else if (line[0] === '\\') f.lines.push({ t: 'ctx', text: line });
+  }
+  return files;
+}
+const MAX_DIFF_LINES = 4000;
+function fileBlock(f, fold) {
+  const rows = f.lines.slice(0, MAX_DIFF_LINES).map(l => l.t === 'hunk'
+    ? `<tr class="hunk"><td class="ln"></td><td class="ln"></td><td>${esc(l.text)}</td></tr>`
+    : `<tr class="${l.t}"><td class="ln">${l.o || ''}</td><td class="ln">${l.n || ''}</td><td>${l.t === 'add' ? '+' : l.t === 'del' ? '−' : ' '}${esc(l.text.replace(/\r$/, ''))}</td></tr>`).join('');
+  const rest = f.lines.length > MAX_DIFF_LINES ? `<div class="diff-note">… ${f.lines.length - MAX_DIFF_LINES} satır daha gösterilmedi.</div>` : '';
+  return `<div class="df ${fold ? 'fold' : ''}"><div class="df-h" data-dffold><i class="fa-solid fa-chevron-down"></i><span class="fp" title="${esc(f.from && f.from !== f.path ? f.from + ' → ' + f.path : f.path)}">${esc(f.from && f.from !== f.path ? f.from + ' → ' + f.path : f.path)}</span>${f.state ? `<span class="gchip">${f.state}</span>` : ''}<span class="nums"><span class="a">+${f.add}</span><span class="d">−${f.del}</span></span></div>` +
+    (f.note ? `<div class="diff-note">${f.note}</div>` : f.lines.length ? `<table class="diff">${rows}</table>${rest}` : '<div class="diff-note">İçerik değişmedi.</div>') + '</div>';
+}
+function diffHTML(patch) {
+  const files = parseDiff(patch.text);
+  const big = files.length > 25;
+  return files.map(f => fileBlock(f, big || f.lines.length > 800)).join('') + (patch.truncated ? '<div class="diff-note">Fark çok büyük, bir kısmı gösterilmedi.</div>' : '');
+}
+
+function initGit() {
+  GIT.tab = (CFG.settings.gitTab === 'github') ? 'github' : 'git';
+  $('#gitBtn').onclick = toggleGitPanel;
+  $('#gitProjBtn').onclick = () => ($('#gitProjDrop').hidden ? openGitDrop() : closeGitDrop());
+  $('#gitProjQ').addEventListener('input', () => renderGitDrop());
+  $('#gitProjQ').addEventListener('keydown', e => {
+    const n = GIT.drop.view.length;
+    if (e.key === 'ArrowDown') { e.preventDefault(); GIT.drop.sel = Math.min(n - 1, GIT.drop.sel + 1); renderGitDrop(true); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); GIT.drop.sel = Math.max(0, GIT.drop.sel - 1); renderGitDrop(true); }
+    else if (e.key === 'Enter') { e.preventDefault(); const p = GIT.drop.view[GIT.drop.sel]; if (p) pickGitProject(p.id); }
+    else if (e.key === 'Escape') { e.stopPropagation(); closeGitDrop(); $('#gitProjBtn').focus(); }
+  });
+  $('#gitPanel').addEventListener('click', e => {
+    const el = e.target.closest('[data-gtab],[data-gitproj],[data-gitc],[data-gwopen],[data-gitreload],[data-ghurl]'); if (!el) return;
+    const d = el.dataset;
+    if (d.gtab) { if (d.gtab !== GIT.tab) setGitTab(d.gtab); }
+    else if (d.gitproj) pickGitProject(d.gitproj);
+    else if (d.gitc) openGitWin('history', d.gitc);
+    else if (d.gwopen) openGitWin(d.gwopen);
+    else if (d.gitreload !== undefined) loadGit(d.gitreload === 'force');
+    else if (d.ghurl) api.invoke('shell:openGithub', d.ghurl);
+  });
+  if (!$('#gitProjDrop').hidden) closeGitDrop();
+  document.addEventListener('mousedown', e => {
+    if (!$('#gitProjDrop').hidden && !e.target.closest('.gp-proj')) closeGitDrop();
+    if (!$('#gitPanel').hidden && !e.target.closest('#gitPanel,#gitBtn')) closeGitPanel();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (!$('#gitWin').hidden) { $('#gitWin').hidden = true; return; }
+    if (!$('#gitPanel').hidden) closeGitPanel();
+  });
+  $('#gitWin').addEventListener('click', e => {
+    if (e.target.id === 'gitWin') { $('#gitWin').hidden = true; return; }
+    const el = e.target.closest('[data-gwview],[data-gwc],[data-gwfile],[data-gwstash],[data-gwmore],[data-dffold]'); if (!el) return;
+    const d = el.dataset;
+    if (d.gwview) { GW.view = d.gwview; GW.sel = null; renderGw(); }
+    else if (d.gwc) { GW.sel = { type: 'commit', hash: d.gwc }; renderGwList(); showGwDetail(); }
+    else if (d.gwfile) { GW.sel = { type: 'file', kind: d.kind, path: d.gwfile }; renderGwList(); showGwDetail(); }
+    else if (d.gwstash) { GW.sel = { type: 'stash', ref: d.gwstash }; renderGwList(); showGwDetail(); }
+    else if (d.gwmore !== undefined) moreGwHistory();
+    else if (d.dffold !== undefined) el.parentElement.classList.toggle('fold');
+  });
+  $('#gwClose').onclick = () => { $('#gitWin').hidden = true; };
+  $('#gwRefresh').onclick = async () => { await reloadGw(true); if (GW.sel) showGwDetail(); };
+  scheduleGitBtn(true);
+  setInterval(() => scheduleGitBtn(true), 30000);
+}
+
 /* ---------------- start ---------------- */
 async function init() {
   const r = await api.invoke('config:get');
@@ -1600,6 +1958,7 @@ async function init() {
   applySkin(CFG.settings.skin);
   setupEditor();
   bindEvents();
+  initGit();
   applyPanels();
   renderUsage();
   await refreshAllHistory();

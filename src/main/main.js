@@ -954,6 +954,20 @@ function registerIpc() {
     return n;
   });
 
+  // git / GitHub (read-only), limited to registered project folders
+  const G = require('./git')({
+    isProject: p => config.projects.some(x => norm(x.path) === norm(p)),
+    insideProject, whereFirst, identity: () => config.identity,
+  });
+  ipcMain.handle('git:head', (_e, p) => G.head(p));
+  ipcMain.handle('git:overview', (_e, p) => G.overview(p));
+  ipcMain.handle('git:log', (_e, p, skip, n) => G.log(p, skip, n));
+  ipcMain.handle('git:show', (_e, p, h) => G.show(p, h));
+  ipcMain.handle('git:diff', (_e, p, kind, f) => G.diff(p, kind, f));
+  ipcMain.handle('git:stash', (_e, p, ref) => G.stash(p, ref));
+  ipcMain.handle('github:info', (_e, p, force) => G.github(p, force));
+  ipcMain.handle('shell:openGithub', (_e, url) => { if (/^https:\/\/github\.com\//i.test(String(url))) shell.openExternal(url); });
+
   ipcMain.handle('history:list', (_e, projectPath) => listSessions(projectPath));
   ipcMain.handle('usage:get', () => computeUsage());
   ipcMain.handle('live:list', () => scanLive());
