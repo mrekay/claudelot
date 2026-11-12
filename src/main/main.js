@@ -921,6 +921,30 @@ function registerIpc() {
   ipcMain.handle('project:addPath', (_e, p) => (fs.existsSync(p) ? addProject(p) : null));
   ipcMain.handle('project:open', (_e, p) => { if (insideProject(p)) shell.openPath(p); });
 
+  // Claude Code's own history retention (cleanupPeriodDays in ~/.claude/settings.json).
+  // Only this key is touched; a file that does not parse is left alone.
+  const USER_SETTINGS = path.join(CLAUDE_DIR, 'settings.json');
+  const readUserSettings = () => {
+    if (!fs.existsSync(USER_SETTINGS)) return {};
+    const raw = fs.readFileSync(USER_SETTINGS, 'utf8').replace(/^﻿/, '');
+    if (!raw.trim()) return {};
+    const j = JSON.parse(raw);
+    if (!j || typeof j !== 'object' || Array.isArray(j)) throw new Error('settings.json beklenen biçimde değil');
+    return j;
+  };
+  ipcMain.handle('claude:getCleanup', () => { try { const v = readUserSettings().cleanupPeriodDays; return Number.isFinite(v) ? v : null; } catch (_) { return null; } });
+  ipcMain.handle('claude:setCleanup', (_e, days) => {
+    const n = Math.round(Number(days));
+    if (!(n >= 1 && n <= 3650)) throw new Error('Geçersiz gün sayısı');
+    let j;
+    try { j = readUserSettings(); } catch (e) { throw new Error('~/.claude/settings.json okunamadı, dokunmadım: ' + e.message); }
+    j.cleanupPeriodDays = n;
+    fs.mkdirSync(CLAUDE_DIR, { recursive: true });
+    fs.writeFileSync(USER_SETTINGS + '.tmp', JSON.stringify(j, null, 2) + '\n');
+    fs.renameSync(USER_SETTINGS + '.tmp', USER_SETTINGS);
+    return n;
+  });
+
   ipcMain.handle('history:list', (_e, projectPath) => listSessions(projectPath));
   ipcMain.handle('usage:get', () => computeUsage());
   ipcMain.handle('live:list', () => scanLive());

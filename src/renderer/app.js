@@ -1153,7 +1153,11 @@ const TONES = { samimi: 'Samimi', resmi: 'Resmi', kisa: 'Kısa ve öz' };
 const LANGS = { tr: 'Türkçe', en: 'İngilizce' };
 const NOTIF_LABELS = { done: 'İş bittiğinde', decision: 'Kararını beklediğinde (izin, plan, soru)', subagent: 'Alt ajan açılınca / bitince', workflow: 'Workflow açılınca / bitince', quiet: 'Rahatsız etme (hepsini sustur)' };
 const sw = (attr, on, label) => `<button class="sw" role="switch" aria-checked="${!!on}" aria-label="${esc(label)}" ${attr}></button>`;
-function openSettings(tab) { if (tab) setTab = tab; $('#settings').hidden = false; closeMenus(); renderSettings(); }
+let CLEANUP = null; // ~/.claude/settings.json cleanupPeriodDays (null = Claude Code's default, 30)
+function openSettings(tab) {
+  if (tab) setTab = tab; $('#settings').hidden = false; closeMenus(); renderSettings();
+  api.invoke('claude:getCleanup').then(v => { if (v !== CLEANUP) { CLEANUP = v; renderSettings(); } }).catch(() => {});
+}
 function renderSettings() {
   if ($('#settings').hidden) return;
   const st = CFG.settings;
@@ -1186,7 +1190,11 @@ function renderSettings() {
       ${c.permissionMode === 'bypassPermissions' ? '<p class="set-warn">Dikkat: Claude hiçbir şey sormadan komut çalıştırır, dosya yazar ve siler. Sadece güvendiğin projelerde kullan. İlk açılışta Claude bir onay isteyebilir.</p>' : ''}
       <h4>Remote Control</h4>
       <div class="set-row"><span>Oturumlar Remote Control açık başlasın<small>Oturumu claude.ai veya telefondaki Claude uygulamasından da sürdürebilirsin. Oturum adı: “proje · Claudelot”.</small></span>${sw('data-cset="remoteControl"', c.remoteControl, 'Remote Control')}</div>
-      <p class="set-note">Bu ayarlar Claudelot'tan yeni açılan ve devam ettirilen oturumlara uygulanır; açık oturumlar etkilenmez. Boş bırakılanlarda Claude Code kendi ayarını kullanır. Tek bir oturum için izin modunu “+ Oturum ▾” menüsünden de seçebilirsin.</p>`;
+      <p class="set-note">Bu ayarlar Claudelot'tan yeni açılan ve devam ettirilen oturumlara uygulanır; açık oturumlar etkilenmez. Boş bırakılanlarda Claude Code kendi ayarını kullanır. Tek bir oturum için izin modunu “+ Oturum ▾” menüsünden de seçebilirsin.</p>
+      <h4>Oturum geçmişi ne kadar saklansın?</h4>
+      <div class="seg">${[30, 90, 180, 365].map(n => `<button class="${(CLEANUP || 30) === n ? 'on' : ''}" data-cleanup="${n}">${n} gün${n === 30 ? ' (varsayılan)' : ''}</button>`).join('')}</div>
+      ${CLEANUP && ![30, 90, 180, 365].includes(CLEANUP) ? `<p class="set-note">Şu anki değer: ${CLEANUP} gün.</p>` : ''}
+      <p class="set-note">Claude Code, bu süreden eski oturum kayıtlarını siler; silinen oturumlar geçmişte ve proje listesinde görünmez. Bu, <code>~/.claude/settings.json</code> içindeki <code>cleanupPeriodDays</code> ayarıdır; Claudelot dışında açtığın oturumlar için de geçerlidir. Daha önce silinenleri geri getirmez.</p>`;
   } else if (setTab === 'tema') {
     const tc = st.termColors || 'windows';
     h = '<h4>Tema</h4>' + skinOptions()
@@ -1335,9 +1343,14 @@ function bindEvents() {
   document.addEventListener('input', e => {
     if (e.target.id === 'cModelCustom') setCfg({ settings: { claude: { model: e.target.value.trim() } } }).then(renderStatus);
   });
-  document.addEventListener('click', e => {
-    const b = e.target.closest('[data-ceffort],[data-cpm],[data-cset]'); if (!b) return;
+  document.addEventListener('click', async e => {
+    const b = e.target.closest('[data-ceffort],[data-cpm],[data-cset],[data-cleanup]'); if (!b) return;
     const c = CFG.settings.claude || {};
+    if (b.dataset.cleanup) {
+      try { CLEANUP = await api.invoke('claude:setCleanup', Number(b.dataset.cleanup)); renderSettings(); toast('Oturum geçmişi', `Claude Code artık ${CLEANUP} günden eski oturumları siler.`); }
+      catch (err) { toast('Ayar kaydedilemedi', cleanErr(err)); }
+      return;
+    }
     if (b.dataset.ceffort !== undefined) setClaude({ effort: b.dataset.ceffort });
     else if (b.dataset.cpm !== undefined) setClaude({ permissionMode: b.dataset.cpm });
     else setClaude({ [b.dataset.cset]: !c[b.dataset.cset] });
