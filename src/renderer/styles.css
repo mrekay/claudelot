@@ -702,3 +702,20 @@ kbd{font:10.5px var(--f-mono);opacity:.75;margin-left:4px}
 .diff tr.del td.ln{background:color-mix(in srgb,var(--danger) 20%,transparent)}
 .diff tr.hunk td{background:var(--accent-soft);color:var(--muted);padding-top:3px;padding-bottom:3px}
 .diff-note{padding:10px 12px;color:var(--muted);font-size:12px}
+/* git line under an open project */
+.proj-git{display:flex;align-items:center;flex-wrap:wrap;gap:4px 5px;margin:-1px 0 4px 20px;padding:2px 4px 2px 2px;font-size:11px;color:var(--muted);min-width:0}
+.pg-br{display:flex;align-items:center;gap:5px;border:0;background:none;color:var(--muted);padding:1px 4px;border-radius:4px;font:11px var(--f-mono);min-width:0;max-width:110px}
+.pg-br span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pg-br i{font-size:10px;flex:none}
+.pg-br:hover{background:var(--hover);color:var(--fg)}
+.proj-git .gchip{font-size:10.5px;padding:0 5px}
+.pg-sp{flex:1}
+.pg-act{display:flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:5px;padding:1px 8px;font-size:11px;font-weight:600}
+.pg-act i{font-size:10px}
+.pg-act:hover{border-color:var(--accent);color:var(--accent)}
+.pg-act.warn{color:var(--warn)}
+.pg-act.warn:hover{border-color:var(--warn)}
+.pg-ref{border:0;background:none;color:var(--muted);width:20px;height:20px;border-radius:4px;display:grid;place-items:center;font-size:10px;padding:0}
+.pg-ref:hover{background:var(--hover);color:var(--fg)}
+.pg-err{color:var(--warn);font-size:11px}
+.pg-busy{display:flex;align-items:center;gap:5px;font-size:11px}

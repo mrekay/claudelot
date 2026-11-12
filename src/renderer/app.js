@@ -628,6 +628,7 @@ function renderSide() {
         <button class="proj-more" data-projmenu="${p.id}" title="Proje seçenekleri" aria-label="Proje seçenekleri"><i class="fa-solid fa-ellipsis"></i></button>
         <span class="split"><button class="new-btn" data-new="${p.id}" title="Bu projede yeni Claude oturumu başlat"><i class="fa-solid fa-plus"></i> Oturum</button><button class="new-btn caret" data-newmenu="${p.id}" title="Terminal ya da PowerShell aç" aria-label="Diğer terminal türleri"><i class="fa-solid fa-caret-down"></i></button></span>
       </div>
+      ${syncLineHTML(p)}
       <ul class="sess-list">${items}</ul>
     </div>`;
   }).join('');
@@ -1243,6 +1244,8 @@ function bindEvents() {
     if (e.target.id === 'report') { $('#report').hidden = true; return; }
     if (!el) return;
     const d = el.dataset;
+    if (d.gsync) { runSync(d.gsync, d.act); return; }
+    if (d.gitopen) { openGitFor(d.gitopen); return; }
     if (d.panel) togglePanel(d.panel);
     else if (d.watch) { if (S.mode === 'claude' || S.mode === 'ide') openWatch(d.watch); }
     else if (d.takeover) takeOverSession(d.takeover);
@@ -1899,6 +1902,78 @@ function diffHTML(patch) {
   return files.map(f => fileBlock(f, big || f.lines.length > 800)).join('') + (patch.truncated ? '<div class="diff-note">Fark çok büyük, bir kısmı gösterilmedi.</div>' : '');
 }
 
+/* ---- git line under each open project in the side panel: behind / waiting / one-click pull, push ---- */
+const SYNC = {}; // pid -> { h, at, fetchedAt, busy, err, loading }
+const SYNC_TEXT = { fetch: 'Kontrol ediliyor', pull: 'Pull yapılıyor', push: 'Push yapılıyor' };
+const sideProjects = () => S.projects.filter(p => S.tabs.some(t => t.projectId === p.id) || outsideOf(p.id).length);
+const syncBtn = (pid, act, icon, label, title) => `<button class="pg-act" data-gsync="${pid}" data-act="${act}" title="${esc(title)}"><i class="fa-solid ${icon}"></i>${label}</button>`;
+function syncLineHTML(p) {
+  const s = SYNC[p.id];
+  if (!s) { refreshSync(p.id); return ''; }
+  const h = s.h;
+  if (!h || !h.repo) return '';
+  const remotes = h.remotes || [];
+  const chips = [];
+  if (!remotes.length) chips.push('<span class="gchip" title="Bu deponun uzak bağlantısı (remote) yok">yalnızca yerel</span>');
+  else if (!h.upstream && !h.detached) chips.push('<span class="gchip warn" title="Bu dal henüz uzağa gönderilmedi">yayımlanmamış</span>');
+  if (h.behind) chips.push(`<span class="gchip acc" title="Uzakta olup sende olmayan ${h.behind} commit var. Pull yapman lazım.">↓ ${h.behind} geride</span>`);
+  if (h.ahead) chips.push(`<span class="gchip warn" title="${h.ahead} commit push edilmeyi bekliyor">↑ ${h.ahead} bekliyor</span>`);
+  if (h.dirty) chips.push(`<span class="gchip" title="Commit edilmemiş ${h.dirty} değişiklik">${h.dirty} değişiklik</span>`);
+  if (h.upstream && !h.behind && !h.ahead) chips.push('<span class="gchip ok" title="Uzak dalla aynı (son kontrole göre)">güncel</span>');
+  let act = '';
+  if (s.busy) act = `<span class="pg-busy"><i class="fa-solid fa-circle-notch fa-spin"></i>${SYNC_TEXT[s.busy]}</span>`;
+  else if (h.ahead && h.behind) act = `<button class="pg-act warn" data-gitopen="${p.id}" title="Yerel ve uzak dal ayrışmış. Otomatik birleştirme yapmıyorum; birleştirme ya da rebase gerekiyor. Ayrıntılar için tıkla."><i class="fa-solid fa-code-merge"></i>Ayrışmış</button>`;
+  else if (h.behind) act = syncBtn(p.id, 'pull', 'fa-arrow-down', 'Pull', `${h.behind} commit'i al (git pull --ff-only)`);
+  else if (h.ahead) act = syncBtn(p.id, 'push', 'fa-arrow-up', 'Push', `${h.ahead} commit'i gönder (git push)`);
+  else if (!h.upstream && remotes.length && !h.detached) act = syncBtn(p.id, 'push', 'fa-cloud-arrow-up', 'Yayımla', `${h.branch} dalını uzağa gönder (git push -u)`);
+  const check = s.busy || !remotes.length ? '' : `<button class="pg-ref" data-gsync="${p.id}" data-act="fetch" title="Uzakta yeni commit var mı bak (git fetch)${s.fetchedAt ? '\nSon kontrol: ' + (rel(s.fetchedAt) === 'şimdi' ? 'az önce' : rel(s.fetchedAt) + ' önce') : ''}" aria-label="Uzak depoyu kontrol et"><i class="fa-solid fa-arrows-rotate"></i></button>`;
+  const err = s.err && !s.busy ? `<i class="fa-solid fa-triangle-exclamation pg-err" title="${esc(s.err)}"></i>` : '';
+  return `<div class="proj-git"><button class="pg-br" data-gitopen="${p.id}" title="${esc(h.branch)} · git ayrıntıları"><i class="fa-solid fa-code-branch"></i><span>${esc(h.detached ? 'detached' : h.branch)}</span></button>${chips.join('')}${err}<span class="pg-sp"></span>${act}${check}</div>`;
+}
+async function refreshSync(pid, doFetch) {
+  const p = proj(pid); if (!p) return;
+  const s = SYNC[pid] || (SYNC[pid] = { h: null, at: 0, fetchedAt: 0, busy: '', err: '', loading: false });
+  if (s.loading || s.busy) return;
+  s.loading = true;
+  try {
+    if (doFetch && s.h && s.h.repo && (s.h.remotes || []).length) {
+      s.busy = 'fetch'; renderSide();
+      const r = await api.invoke('git:sync', p.path, 'fetch');
+      s.h = r.after; s.fetchedAt = Date.now(); s.err = '';
+    } else s.h = await api.invoke('git:head', p.path);
+  } catch (e) { s.err = cleanErr(e); }
+  s.busy = ''; s.loading = false; s.at = Date.now();
+  renderSide();
+  // first time we see it: ask the remote too, so "behind" is real
+  if (!doFetch && !s.fetchedAt && s.h && s.h.repo && (s.h.remotes || []).length) refreshSync(pid, true);
+}
+async function runSync(pid, act) {
+  const p = proj(pid), s = SYNC[pid]; if (!p || !s || s.busy) return;
+  if (act === 'fetch') { s.fetchedAt = 0; return refreshSync(pid, true); }
+  s.busy = act; s.err = ''; renderSide();
+  try {
+    const r = await api.invoke('git:sync', p.path, act);
+    s.h = r.after;
+    const b = r.before;
+    if (act === 'pull') toast(`${p.name}: pull tamam`, `${b.behind} commit alındı.`);
+    else if (!b.upstream) toast(`${p.name}: dal yayımlandı`, `${b.branch} artık uzakta da var.`);
+    else toast(`${p.name}: push tamam`, `${b.ahead} commit gönderildi.`);
+  } catch (e) {
+    s.err = cleanErr(e);
+    toast(`${p.name}: ${act === 'pull' ? 'pull' : 'push'} yapılamadı`, s.err);
+  }
+  s.busy = '';
+  renderSide();
+  scheduleGitBtn(true);
+  if (!$('#gitPanel').hidden && GIT.pid === pid) loadGit();
+  if (!$('#gitWin').hidden && GW.pid === pid) reloadGw(true);
+}
+function openGitFor(pid) {
+  openGitPanel();
+  if (GIT.pid !== pid) pickGitProject(pid);
+  if (GIT.tab !== 'git') setGitTab('git');
+}
+
 function initGit() {
   GIT.tab = (CFG.settings.gitTab === 'github') ? 'github' : 'git';
   $('#gitBtn').onclick = toggleGitPanel;
@@ -1946,6 +2021,8 @@ function initGit() {
   $('#gwRefresh').onclick = async () => { await reloadGw(true); if (GW.sel) showGwDetail(); };
   scheduleGitBtn(true);
   setInterval(() => scheduleGitBtn(true), 30000);
+  setInterval(() => sideProjects().forEach(p => refreshSync(p.id)), 30000);
+  setInterval(() => sideProjects().forEach(p => refreshSync(p.id, true)), 5 * 60000);
 }
 
 /* ---------------- start ---------------- */

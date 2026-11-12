@@ -81,6 +81,35 @@ module.exports = function gitApi({ isProject, insideProject, whereFirst, identit
       dirty: st.staged.length + st.unstaged.length + st.conflicted.length, conflicted: st.conflicted.length, remotes };
   }
 
+  /* the one-click actions: fetch (check), pull (fast-forward only), push / publish.
+     No merges, rebases or force pushes: anything that needs a decision is left to the user. */
+  const NET = { timeout: 90000, env: { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'auto' } };
+  async function sync(p, action) {
+    check(p);
+    const h = await head(p);
+    if (!h.repo) throw new Error('Bu proje bir git deposu değil.');
+    if (!h.remotes.length) throw new Error('Bu deponun uzak bağlantısı (remote) yok.');
+    if (action === 'fetch') await git(p, ['fetch', '--prune', '--quiet'], NET);
+    else if (action === 'pull') {
+      if (h.detached) throw new Error('Bir dalda değilsin (detached HEAD).');
+      if (!h.upstream) throw new Error('Bu dalın uzak karşılığı yok.');
+      if (h.conflicted) throw new Error('Çözülmemiş çakışmalar var.');
+      await git(p, ['pull', '--ff-only', '--quiet'], NET).catch(e => {
+        if (/not possible to fast-forward|diverg|fast-forward/i.test(e.message)) throw new Error('Yerel ve uzak dal ayrışmış; otomatik birleştirmedim. Önce birleştirme ya da rebase gerekiyor.');
+        if (/would be overwritten/i.test(e.message)) throw new Error('Gelen değişiklikler, commit edilmemiş dosyalarının üzerine yazacak. Önce commit ya da stash yap.');
+        throw e;
+      });
+    } else if (action === 'push') {
+      if (h.detached) throw new Error('Bir dalda değilsin (detached HEAD).');
+      if (h.upstream) await git(p, ['push', '--quiet'], NET).catch(e => {
+        if (/rejected|fetch first|non-fast-forward/i.test(e.message)) throw new Error('Uzakta sende olmayan commitler var. Önce pull yap.');
+        throw e;
+      });
+      else await git(p, ['push', '--quiet', '-u', h.remotes.includes('origin') ? 'origin' : h.remotes[0], 'HEAD'], NET);
+    } else throw new Error('Bilinmeyen işlem');
+    return { before: h, after: await head(p) };
+  }
+
   async function overview(p, n = 8) {
     check(p);
     const top = (await gitSafe(p, ['rev-parse', '--show-toplevel'])).trim();
@@ -204,5 +233,5 @@ module.exports = function gitApi({ isProject, insideProject, whereFirst, identit
     return v;
   }
 
-  return { head, overview, log, show, diff, stash, github };
+  return { head, sync, overview, log, show, diff, stash, github };
 };
