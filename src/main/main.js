@@ -38,6 +38,7 @@ const liveNotifications = new Set();
 /* ---------------- config ---------------- */
 const DEFAULTS = {
   projects: [],
+  removedProjects: [], // paths the user removed; discovery never brings them back
   lastTabs: [], // terminals that were open last time: {projectId, kind, shell, sessionId, title}
   settings: {
     name: '', tone: 'samimi', // name: filled from git / GitHub on first launch, else no form of address lang: 'tr', extra: '',
@@ -167,6 +168,34 @@ async function listSessions(projectPath) {
   }
   return out;
 }
+/* ~/.claude/projects/<name>: the name is the folder path with every non-alphanumeric
+   character turned into '-'. Walk the disk to find the folder that encodes to it. */
+async function decodeProjectDir(enc) {
+  const m = enc.match(/^([A-Za-z])--(.+)$/);
+  if (!m) return null;
+  async function walk(dir, rest, depth) {
+    if (depth > 24) return null;
+    let ents;
+    try { ents = await fsp.readdir(dir, { withFileTypes: true }); } catch (_) { return null; }
+    for (const e of ents) {
+      if (!e.isDirectory()) continue;
+      const k = encodeProjectDir(e.name);
+      if (rest === k) return path.join(dir, e.name);
+      if (rest.startsWith(k + '-')) { const r = await walk(path.join(dir, e.name), rest.slice(k.length + 1), depth + 1); if (r) return r; }
+    }
+    return null;
+  }
+  return walk(m[1].toUpperCase() + ':' + path.sep, m[2], 0);
+}
+/* add every folder with Claude Code history that is not in the list yet (unless the user removed it) */
+async function syncDiscovered() {
+  const removed = new Set((config.removedProjects || []).map(norm));
+  const known = new Set(config.projects.map(x => norm(x.path)));
+  const found = (await discoverProjects()).filter(f => !removed.has(norm(f.path)) && !known.has(norm(f.path)));
+  found.forEach(f => addProject(f.path, true));
+  if (found.length) { saveConfigNow(); send('projects-changed', config.projects); }
+  return found.length;
+}
 async function discoverProjects() {
   let dirs;
   try { dirs = await fsp.readdir(PROJECTS_DIR); } catch (_) { return []; }
@@ -179,9 +208,13 @@ async function discoverProjects() {
     for (const f of files) {
       try { const st = await fsp.stat(path.join(full, f)); if (!newest || st.mtimeMs > newest.mtime) newest = { f, mtime: st.mtimeMs }; } catch (_) {}
     }
-    if (!newest) continue;
-    const meta = await sessionMeta(path.join(full, newest.f), newest.mtime);
-    if (meta.cwd && fs.existsSync(meta.cwd) && encodeProjectDir(meta.cwd) === d) found.push({ path: meta.cwd, mtime: newest.mtime });
+    if (newest) {
+      const meta = await sessionMeta(path.join(full, newest.f), newest.mtime);
+      if (meta.cwd && fs.existsSync(meta.cwd) && encodeProjectDir(meta.cwd) === d) { found.push({ path: meta.cwd, mtime: newest.mtime }); continue; }
+    }
+    // no session file (or it names another folder): rebuild the path from the folder name
+    const back = await decodeProjectDir(d);
+    if (back) { let mtime = 0; try { mtime = (await fsp.stat(full)).mtimeMs; } catch (_) {} found.push({ path: back, mtime: newest ? newest.mtime : mtime }); }
   }
   return found.sort((a, b) => b.mtime - a.mtime);
 }
@@ -876,7 +909,11 @@ function registerIpc() {
     if (r.canceled || !r.filePaths[0]) return null;
     return addProject(r.filePaths[0]);
   });
-  ipcMain.handle('project:remove', (_e, id) => { config.projects = config.projects.filter(p => p.id !== id); saveConfig(); return config.projects; });
+  ipcMain.handle('project:remove', (_e, id) => {
+    const gone = config.projects.find(p => p.id === id);
+    if (gone && !config.removedProjects.some(r => norm(r) === norm(gone.path))) config.removedProjects.push(gone.path);
+    config.projects = config.projects.filter(p => p.id !== id); saveConfig(); return config.projects;
+  });
   ipcMain.handle('project:discover', async () => {
     const known = new Set(config.projects.map(p => norm(p.path)));
     return (await discoverProjects()).filter(p => !known.has(norm(p.path)));
@@ -967,8 +1004,9 @@ function registerIpc() {
     return true;
   });
 }
-function addProject(p) {
+function addProject(p, auto) {
   const full = path.resolve(p);
+  if (!auto) config.removedProjects = (config.removedProjects || []).filter(r => norm(r) !== norm(full));
   const existing = config.projects.find(x => norm(x.path) === norm(full));
   if (existing) return existing;
   const proj = { id: crypto.randomUUID().slice(0, 8), name: path.basename(full) || full, path: full };
@@ -988,12 +1026,9 @@ app.whenReady().then(async () => {
   appMenu();
   await startHookServer();
   writeAppendPrompt();
-  if (firstRun) {
-    // first launch: bring in folders that already have Claude Code history
-    const found = await discoverProjects();
-    found.slice(0, 12).forEach(f => addProject(f.path));
-    saveConfigNow();
-  }
+  // bring in every folder that has Claude Code history (on first launch and whenever a new one appears)
+  await syncDiscovered().catch(() => {});
+  setInterval(() => syncDiscovered().catch(() => {}), 10 * 60 * 1000);
   registerIpc();
   if (firstRun || !config.identity) await detectIdentity({ firstLaunch: firstRun }).catch(() => {});
   computeUsage().catch(() => {});
