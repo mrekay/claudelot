@@ -1,4 +1,4 @@
-/* Claudelot — 3 skins: "violet" (default dark), "teal" (follows Windows light/dark), "mono" (black & white, states stay colored) */
+/* VoxStorm — 3 skins: "violet" (default dark), "teal" (follows Windows light/dark), "mono" (black & white, states stay colored) */
 :root{
   color-scheme:dark;
   --bg:#0b0a12; --surface:#15131f; --surface-2:#100e18; --hover:#211d33; --line:#2a2540;

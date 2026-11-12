@@ -1,0 +1,5 @@
+/* VoxStorm DB mode */
+.db{display:flex;flex:1;min-height:0;background:var(--surface)}
+.db-empty{margin:auto;display:grid;justify-items:center;gap:6px;color:var(--muted);text-align:center}
+.db-empty i{font-size:30px;opacity:.6}
+.db-empty b{color:var(--fg);font-size:15px}

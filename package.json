@@ -1,6 +1,6 @@
 {
-  "name": "claudelot",
-  "version": "0.1.0",
+  "name": "voxstorm",
+  "version": "0.2.0",
   "description": "Claude Code oturumlarını tek pencereden yöneten Windows masaüstü uygulaması",
   "author": "mrekay",
   "homepage": "https://github.com/mrekay/claudelot",
@@ -10,7 +10,7 @@
   },
   "main": "src/main/main.js",
   "private": true,
-  "productName": "Claudelot",
+  "productName": "VoxStorm",
   "scripts": {
     "start": "electron .",
     "dist": "node scripts/make-icon.js && electron-builder --win"
@@ -30,7 +30,7 @@
   },
   "build": {
     "appId": "com.claudelot.app",
-    "productName": "Claudelot",
+    "productName": "VoxStorm",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -65,11 +65,11 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Claudelot",
-      "artifactName": "Claudelot-Setup-${version}.${ext}"
+      "shortcutName": "VoxStorm",
+      "artifactName": "VoxStorm-Setup-${version}.${ext}"
     },
     "portable": {
-      "artifactName": "Claudelot-Portable-${version}.${ext}"
+      "artifactName": "VoxStorm-Portable-${version}.${ext}"
     }
   }
 }

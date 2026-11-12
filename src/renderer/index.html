@@ -3,22 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data:">
-<title>Claudelot</title>
+<title>VoxStorm</title>
 <link rel="stylesheet" href="../../node_modules/@fortawesome/fontawesome-free/css/all.min.css">
 <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css">
 <link rel="stylesheet" href="../../node_modules/codemirror/lib/codemirror.css">
 <link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="db.css">
 </head>
 <body>
 <div class="window" id="win">
   <header class="titlebar">
     <div class="tb-left">
-      <div class="brand"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="2" width="16" height="4" rx="1.5" fill="var(--accent)"/><rect x="1" y="7.5" width="12" height="4" rx="1.5" fill="var(--accent)" opacity=".7"/><rect x="1" y="13" width="8" height="4" rx="1.5" fill="var(--warn)"/></svg>Claudelot</div>
+      <div class="brand"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="2" width="16" height="4" rx="1.5" fill="var(--accent)"/><rect x="1" y="7.5" width="12" height="4" rx="1.5" fill="var(--accent)" opacity=".7"/><rect x="1" y="13" width="8" height="4" rx="1.5" fill="var(--warn)"/></svg>VoxStorm</div>
       <button class="git-btn" id="gitBtn" title="Git ve GitHub (Ctrl+Shift+G)" aria-haspopup="true" aria-expanded="false"><i class="fa-brands fa-git-alt"></i><span id="gitBtnLabel">Git</span><b class="git-btn-n" id="gitBtnN" hidden></b><i class="fa-solid fa-chevron-down gb-car"></i></button>
     </div>
     <div class="mode-pill" role="tablist" aria-label="Mod">
-      <button role="tab" data-mode="claude" class="on" title="Claude modu (Ctrl+1)"><i class="fa-solid fa-terminal"></i>Claude<span class="pill-b" id="pillBadge" hidden>0</span></button>
+      <button role="tab" data-mode="claude" class="on" title="AI modu: Claude oturumları (Ctrl+1)"><i class="fa-solid fa-robot"></i>AI<span class="pill-b" id="pillBadge" hidden>0</span></button>
       <button role="tab" data-mode="ide" title="IDE modu (Ctrl+2)"><i class="fa-solid fa-code"></i>IDE</button>
+      <button role="tab" data-mode="db" title="Veritabanı modu (Ctrl+3)"><i class="fa-solid fa-database"></i>DB</button>
     </div>
     <div class="tb-right">
       <button class="tb-btn upd-btn" id="updBtn" hidden aria-label="Güncelleme"><i class="fa-solid fa-circle-arrow-up"></i></button>
@@ -141,6 +143,9 @@
     </div>
   </div>
 
+  <!-- DB MODE: filled by db.js -->
+  <div class="db" id="dbView" hidden></div>
+
   <div class="statusbar" id="statusbar"></div>
 
   <div class="term-host" id="termHost"></div>
@@ -225,5 +230,6 @@
 <script src="../../node_modules/marked/lib/marked.umd.js"></script>
 <script src="../../node_modules/dompurify/dist/purify.min.js"></script>
 <script src="app.js"></script>
+<script src="db.js"></script>
 </body>
 </html>

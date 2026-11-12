@@ -1,4 +1,4 @@
-// Claudelot — git / GitHub (read-only)
+// VoxStorm — git / GitHub (read-only)
 // Every git call runs as `git -C <project>` and only for a registered project folder.
 // GitHub data comes from `gh api` when the GitHub CLI is installed and signed in
 // (private repos too), otherwise from the public REST API without a token.
@@ -217,7 +217,7 @@ module.exports = function gitApi({ isProject, insideProject, whereFirst, identit
       if (!/auth login|not logged|authentication/i.test(r.err)) return { error: r.err.split('\n')[0], via: 'gh' };
       // gh is installed but not signed in: fall back to the public API
     }
-    const r = await net.fetch('https://api.github.com/' + route, { headers: { 'User-Agent': 'Claudelot', Accept: 'application/vnd.github+json' } });
+    const r = await net.fetch('https://api.github.com/' + route, { headers: { 'User-Agent': 'VoxStorm', Accept: 'application/vnd.github+json' } });
     if (!r.ok) return { status: r.status, via: 'public', limited: r.status === 403 && r.headers.get('x-ratelimit-remaining') === '0' };
     return { data: await r.json(), via: 'public' };
   }

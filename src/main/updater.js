@@ -1,13 +1,13 @@
-// Claudelot — updates from GitHub Releases (mrekay/claudelot)
+// VoxStorm — updates from GitHub Releases (mrekay/claudelot)
 //
 // A release made by .github/workflows/release.yml carries:
-//   Claudelot-Setup-x.y.z.exe, Claudelot-Portable-x.y.z.exe, claudelot-app-x.y.z.asar
-//   claudelot-update.json  { version, electron, files: { setup|portable|asar: { name, size, sha256 } } }
+//   VoxStorm-Setup-x.y.z.exe, VoxStorm-Portable-x.y.z.exe, voxstorm-app-x.y.z.asar
+//   voxstorm-update.json  { version, electron, files: { setup|portable|asar: { name, size, sha256 } } }
 // How an update is applied depends on how this copy runs:
 //   nsis      installed with Setup  -> run the new Setup silently (/S), it reinstalls in place
 //   portable  the single .exe       -> replace that .exe
 //   asar      an unpacked folder    -> replace resources\app.asar (only when Electron is unchanged)
-// Every download is checked against the sha256 in claudelot-update.json; a release without
+// Every download is checked against the sha256 in voxstorm-update.json; a release without
 // that file is only announced, never installed.
 const path = require('path');
 // original-fs: Electron's fs treats *.asar paths as archives, which breaks writing the update file
@@ -32,7 +32,7 @@ module.exports = function updater({ app, net, DATA, settings, notify, onState, b
   const exe = process.execPath;
   const kind = !app.isPackaged ? 'dev'
     : process.env.PORTABLE_EXECUTABLE_FILE ? 'portable'
-    : fs.existsSync(path.join(path.dirname(exe), 'Uninstall Claudelot.exe')) ? 'nsis'
+    : ['Uninstall VoxStorm.exe', 'Uninstall Claudelot.exe'].some(n => fs.existsSync(path.join(path.dirname(exe), n))) ? 'nsis'
     : 'asar';
   // status: idle | checking | none | available | downloading | ready | manual | error
   const st = { status: 'idle', current: app.getVersion(), kind, latest: '', notes: '', url: '', publishedAt: '', progress: 0, error: '', reason: '', checkedAt: 0 };
@@ -43,7 +43,7 @@ module.exports = function updater({ app, net, DATA, settings, notify, onState, b
   const set = patch => { Object.assign(st, patch); emit(); };
 
   async function getJson(url) {
-    const r = await net.fetch(url, { headers: { 'User-Agent': 'Claudelot', Accept: 'application/vnd.github+json' } });
+    const r = await net.fetch(url, { headers: { 'User-Agent': 'VoxStorm', Accept: 'application/vnd.github+json' } });
     if (r.status === 404) return null;
     if (!r.ok) throw new Error(r.status === 403 ? 'GitHub istek sınırına ulaşıldı, biraz sonra tekrar dene.' : `GitHub yanıtı: ${r.status}`);
     return r.json();
@@ -74,7 +74,7 @@ module.exports = function updater({ app, net, DATA, settings, notify, onState, b
         return { ...st };
       }
       release = rel;
-      const m = rel.assets.find(a => a.name === 'claudelot-update.json');
+      const m = rel.assets.find(a => a.name === 'voxstorm-update.json');
       manifest = m ? await getJson(m.browser_download_url).catch(() => null) : null;
       if (manifest && manifest.version && newer(rel.tag_name, manifest.version)) manifest = null; // stale manifest
       const p = pick();
@@ -86,7 +86,7 @@ module.exports = function updater({ app, net, DATA, settings, notify, onState, b
         if (fs.existsSync(target) && (await sha256(target)) === p.f.sha256.toLowerCase()) { file = { path: target, want: p.want }; set({ status: 'ready', progress: 1 }); }
         else if (settings().auto) download();
       }
-      if (!quiet && (st.status === 'available' || st.status === 'manual')) tell(st.latest + ':found', `Claudelot ${st.latest} çıktı`, st.status === 'manual' ? 'Ayrıntılar Ayarlar → Hakkında bölümünde.' : 'İndiriliyor; hazır olunca yeniden başlatman yeterli.');
+      if (!quiet && (st.status === 'available' || st.status === 'manual')) tell(st.latest + ':found', `VoxStorm ${st.latest} çıktı`, st.status === 'manual' ? 'Ayrıntılar Ayarlar → Hakkında bölümünde.' : 'İndiriliyor; hazır olunca yeniden başlatman yeterli.');
     } catch (e) {
       set({ status: 'error', error: e.message });
     }
@@ -111,7 +111,7 @@ module.exports = function updater({ app, net, DATA, settings, notify, onState, b
       for (const n of await fsp.readdir(DIR)) if (n !== p.f.name && !/\.(ps1|vbs|log)$/.test(n)) await fsp.rm(path.join(DIR, n), { force: true, recursive: true }).catch(() => {});
       const tmp = path.join(DIR, p.f.name + '.part');
       try {
-        const r = await net.fetch(p.a.browser_download_url, { headers: { 'User-Agent': 'Claudelot', Accept: 'application/octet-stream' } });
+        const r = await net.fetch(p.a.browser_download_url, { headers: { 'User-Agent': 'VoxStorm', Accept: 'application/octet-stream' } });
         if (!r.ok || !r.body) throw new Error(`İndirme başarısız: ${r.status}`);
         const total = Number(r.headers.get('content-length')) || p.f.size || p.a.size || 0;
         const out = fs.createWriteStream(tmp);
@@ -133,7 +133,7 @@ module.exports = function updater({ app, net, DATA, settings, notify, onState, b
         await fsp.rename(tmp, target);
         file = { path: target, want: p.want };
         set({ status: 'ready', progress: 1 });
-        tell(st.latest + ':ready', `Claudelot ${st.latest} hazır`, 'Yeniden başlatınca kurulur. Çıkışta da kendiliğinden kurulur.');
+        tell(st.latest + ':ready', `VoxStorm ${st.latest} hazır`, 'Yeniden başlatınca kurulur. Çıkışta da kendiliğinden kurulur.');
       } catch (e) {
         await fsp.rm(tmp, { force: true }).catch(() => {});
         set({ status: 'error', error: e.message });
@@ -143,7 +143,7 @@ module.exports = function updater({ app, net, DATA, settings, notify, onState, b
     return downloading;
   }
 
-  /* Hand over to a small PowerShell script that waits for every Claudelot process of this
+  /* Hand over to a small PowerShell script that waits for every VoxStorm process of this
      copy to exit, swaps the files, and (optionally) starts the new version. */
   function apply(relaunch) {
     if (!file || applying || st.status !== 'ready') return false;
@@ -166,14 +166,14 @@ module.exports = function updater({ app, net, DATA, settings, notify, onState, b
 $log = ${q(path.join(DIR, 'apply.log'))}
 function Log($m) { Add-Content -LiteralPath $log -Value ("{0:u} {1}" -f (Get-Date), $m) -Encoding UTF8 }
 try {
-  Log 'Claudelot ${st.current} -> ${st.latest} (${kind})'
+  Log 'VoxStorm ${st.current} -> ${st.latest} (${kind})'
   $paths = @(${waitFor.map(q).join(', ')})
   for ($i = 0; $i -lt 120; $i++) {
     $left = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and ($paths -contains $_.Path) })
     if ($left.Count -eq 0) { break }
     Start-Sleep -Milliseconds 500
   }
-  if ($left.Count -gt 0) { throw 'Claudelot kapanmadı' }
+  if ($left.Count -gt 0) { throw 'VoxStorm kapanmadı' }
   for ($try = 0; ; $try++) {
     try {
   ${step}

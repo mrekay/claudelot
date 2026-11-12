@@ -1,5 +1,5 @@
-# Pushing a tag like v0.2.0 builds Claudelot on Windows and publishes a GitHub release
-# with the installers, the app.asar and claudelot-update.json (used by the in-app updater).
+# Pushing a tag like v0.2.0 builds VoxStorm on Windows and publishes a GitHub release
+# with the installers, the app.asar and voxstorm-update.json (used by the in-app updater).
 # The tag must match "version" in package.json:  npm version minor && git push --follow-tags
 name: Release
 
@@ -43,8 +43,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           v="${GITHUB_REF_NAME#v}"
-          gh release create "$GITHUB_REF_NAME" --title "Claudelot $v" --generate-notes \
-            "dist/Claudelot-Setup-$v.exe" \
-            "dist/Claudelot-Portable-$v.exe" \
-            "dist/claudelot-app-$v.asar" \
-            "dist/claudelot-update.json"
+          gh release create "$GITHUB_REF_NAME" --title "VoxStorm $v" --generate-notes \
+            "dist/VoxStorm-Setup-$v.exe" \
+            "dist/VoxStorm-Portable-$v.exe" \
+            "dist/voxstorm-app-$v.asar" \
+            "dist/voxstorm-update.json"

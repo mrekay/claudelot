@@ -1,4 +1,4 @@
-# Claudelot
+# VoxStorm
 
 Claude Code oturumlarını tek pencereden yöneten Windows masaüstü uygulaması.
 
@@ -20,8 +20,8 @@ Claude Code oturumlarını tek pencereden yöneten Windows masaüstü uygulamas�
 
 [Releases](../../releases) sayfasından indir:
 
-- `Claudelot-Setup-x.y.z.exe`: normal kurulum
-- `Claudelot-Portable-x.y.z.exe`: kurulumsuz, tek dosya
+- `VoxStorm-Setup-x.y.z.exe`: normal kurulum
+- `VoxStorm-Portable-x.y.z.exe`: kurulumsuz, tek dosya
 
 Gerekenler: Windows 10/11 ve PATH'te `claude` komutu (Claude Code). Git Bash isteğe bağlı.
 
@@ -37,9 +37,9 @@ npm run dist     # Setup ve Portable dosyalarını dist/ klasörüne derle
 
 ## Nasıl çalışır
 
-- Claude oturumları, Claudelot'un kendi hook ayarlarıyla (`--settings`) başlatılır. Hook'lar olayları uygulamanın yerel portuna gönderir; durumlar, bildirimler ve karar paneli buradan beslenir. `~/.claude/settings.json` ve `CLAUDE.md` dosyalarına dokunulmaz.
+- Claude oturumları, VoxStorm'un kendi hook ayarlarıyla (`--settings`) başlatılır. Hook'lar olayları uygulamanın yerel portuna gönderir; durumlar, bildirimler ve karar paneli buradan beslenir. `~/.claude/settings.json` ve `CLAUDE.md` dosyalarına dokunulmaz.
 - Geçmiş oturumlar ve kullanım, `~/.claude/projects` altındaki oturum kayıtlarından okunur.
-- Ayarlar, proje listesi ve günlük kullanım geçmişi `%APPDATA%\Claudelot` klasöründe tutulur.
+- Ayarlar, proje listesi ve günlük kullanım geçmişi `%APPDATA%\VoxStorm` klasöründe tutulur.
 
 ## Proje yapısı
 

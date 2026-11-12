@@ -1,5 +1,5 @@
 'use strict';
-/* Claudelot renderer — talks to the main process only through window.api (see preload.js). */
+/* VoxStorm renderer — talks to the main process only through window.api (see preload.js). */
 /* global api, Terminal, FitAddon, CodeMirror */ // `api` comes from preload.js
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -88,7 +88,7 @@ function toast(title, body) {
 }
 
 /* ---------------- notifications ---------------- */
-/* Claudelot's own chimes, made with Web Audio so no sound files are needed:
+/* VoxStorm's own chimes, made with Web Audio so no sound files are needed:
    done = two rising notes, decision = a brighter four-note call, others = one soft note */
 let audioCtx = null;
 const CHIMES = {
@@ -163,7 +163,7 @@ async function refreshUsage() {
 }
 
 /* ---------------- terminals ---------------- */
-function tabIcon(t) { if (t.kind === 'watch') return `<span class="dot ${t.status}"></span><i class="fa-solid fa-eye watch-ic" title="Claudelot dışında açık, izleniyor"></i>`; return t.kind === 'shell' ? (SHELL_ICONS[t.shell] || '<i class="shi fa-solid fa-terminal"></i>') : `<span class="dot ${t.status}"></span>`; }
+function tabIcon(t) { if (t.kind === 'watch') return `<span class="dot ${t.status}"></span><i class="fa-solid fa-eye watch-ic" title="VoxStorm dışında açık, izleniyor"></i>`; return t.kind === 'shell' ? (SHELL_ICONS[t.shell] || '<i class="shi fa-solid fa-terminal"></i>') : `<span class="dot ${t.status}"></span>`; }
 
 async function openTerminal({ kind = 'claude', shell, projectId, resume, title, overrides }) {
   // already running in an outside terminal: follow it instead of starting a second copy
@@ -194,7 +194,7 @@ async function openTerminal({ kind = 'claude', shell, projectId, resume, title, 
   S.collapsed[projectId] = false; // show the project that just got a terminal
   renderAll();
   try {
-    const res = await api.invoke('pty:spawn', { kind, shell, cwd: p.path, resume, overrides, rcName: `${p.name} · Claudelot`, cols: term.cols, rows: term.rows });
+    const res = await api.invoke('pty:spawn', { kind, shell, cwd: p.path, resume, overrides, rcName: `${p.name} · VoxStorm`, cols: term.cols, rows: term.rows });
     tab.id = res.id; tab.sessionId = res.sessionId;
     S.active = tab.id;
     (early.get(res.id) || []).forEach(d => term.write(d));
@@ -375,7 +375,7 @@ function decide(id, c) {
   renderAll();
 }
 
-/* ---------------- live sessions opened outside Claudelot ----------------
+/* ---------------- live sessions opened outside VoxStorm ----------------
    The main process lists running Claude sessions that none of our terminals own.
    Clicking one opens a read-only "watch" tab that follows its transcript, so an
    outside session is never started a second time with --resume. */
@@ -542,12 +542,12 @@ function renderWatchBar(t) {
   const st = s ? (s.status === 'waiting' ? waitText(s.waitingFor) : s.status === 'busy' ? 'Çalışıyor' : 'Hazır') : '';
   const conn = !s ? 'kapandı' : t.mirrorState === 'live' ? 'terminale bağlı, yazdıkların o pencereye gider' : t.mirrorState === 'connecting' ? 'terminale bağlanılıyor…' : 'terminale bağlanılamadı, sadece konuşma görünüyor';
   bar.innerHTML = `<span class="dot ${t.status}"></span>`
-    + `<span class="wb-t"><b>${s ? 'Claudelot dışında açık' : 'Dışarıdaki oturum kapandı'}</b>${st ? ' · ' + esc(st) : ''}`
+    + `<span class="wb-t"><b>${s ? 'VoxStorm dışında açık' : 'Dışarıdaki oturum kapandı'}</b>${st ? ' · ' + esc(st) : ''}`
     + `<small>${esc(s ? s.cwd : t.cwd)}${s ? ' · PID ' + s.pid : ''} · ${conn}</small></span>`
     + `<span class="seg wb-seg"><button class="${t.view === 'term' ? 'on' : ''}" data-wview="term" ${t.term || t.mirrorState === 'connecting' ? '' : 'disabled'}><i class="fa-solid fa-terminal"></i> Terminal</button><button class="${t.view === 'log' ? 'on' : ''}" data-wview="log"><i class="fa-regular fa-comments"></i> Konuşma</button></span>`
     + (s
-      ? `<button class="btn" data-takeover="${t.sessionId}" title="Dışarıdaki claude sürecini kapatır, konuşmaya bir Claudelot terminalinde kaldığı yerden devam eder"><i class="fa-solid fa-right-to-bracket"></i> Claudelot'a taşı</button>`
-      : `<button class="btn primary" data-continue="${t.sessionId}" title="Konuşmaya bir Claudelot terminalinde kaldığı yerden devam eder"><i class="fa-solid fa-play"></i> Claudelot'ta devam et</button>`);
+      ? `<button class="btn" data-takeover="${t.sessionId}" title="Dışarıdaki claude sürecini kapatır, konuşmaya bir VoxStorm terminalinde kaldığı yerden devam eder"><i class="fa-solid fa-right-to-bracket"></i> VoxStorm'a taşı</button>`
+      : `<button class="btn primary" data-continue="${t.sessionId}" title="Konuşmaya bir VoxStorm terminalinde kaldığı yerden devam eder"><i class="fa-solid fa-play"></i> VoxStorm'ta devam et</button>`);
 }
 function watchEntryHTML(e) {
   const tm = e.ts ? new Date(e.ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) : '';
@@ -582,7 +582,7 @@ async function takeOverSession(sid) {
   const s = S.live.find(x => x.sessionId === sid);
   if (!s) return continueHere(sid);
   const warn = s.status === 'busy' ? '\n\nDİKKAT: Oturum şu an çalışıyor; yarım kalan iş kesilir.' : '';
-  if (!confirm(`"${shorten(s.title, 60)}" şu an başka bir terminalde açık (PID ${s.pid}).\n\nClaudelot'a almak için oradaki claude süreci kapatılacak, konuşma burada kaldığı yerden devam edecek.${warn}\n\nDevam edilsin mi?`)) return;
+  if (!confirm(`"${shorten(s.title, 60)}" şu an başka bir terminalde açık (PID ${s.pid}).\n\nVoxStorm'a almak için oradaki claude süreci kapatılacak, konuşma burada kaldığı yerden devam edecek.${warn}\n\nDevam edilsin mi?`)) return;
   const r = await api.invoke('live:takeover', sid);
   if (!r || !r.ok) { toast('Devralınamadı', (r && r.error) || ''); return; }
   await continueHere(sid, s.cwd);
@@ -635,14 +635,14 @@ function renderSide() {
   }).join('');
   if (orphans.length || orphanTabs.length) {
     $('#side').insertAdjacentHTML('beforeend', `<div class="proj ext-group">
-      <div class="proj-row"><span class="proj-toggle" title="Claudelot'taki projelerin dışındaki klasörlerde açık oturumlar"><i class="fa-solid fa-eye chev" aria-hidden="true"></i><span class="proj-name">Diğer klasörler</span></span></div>
+      <div class="proj-row"><span class="proj-toggle" title="VoxStorm'taki projelerin dışındaki klasörlerde açık oturumlar"><i class="fa-solid fa-eye chev" aria-hidden="true"></i><span class="proj-name">Diğer klasörler</span></span></div>
       <ul class="sess-list">${orphans.map(s => extRow(s, true)).join('')}${orphanTabs.map(t => `<li><button class="sess live ${t.id === S.active ? 'active' : ''}" data-tab="${t.id}">${tabIcon(t)}<span class="sess-t">${esc(t.title)}</span><span class="sess-time">kapandı</span></button></li>`).join('')}</ul>
     </div>`);
   }
 }
 function extRow(s, showDir) {
   const w = watchTab(s.sessionId), st = LIVE_ST[s.status] || 'idle';
-  const tip = `${s.title}\n${s.cwd}\nClaudelot dışında açık (PID ${s.pid}) · ${s.status === 'waiting' ? waitText(s.waitingFor) : STATUS_TEXT[st]}\nİzlemek için tıkla`;
+  const tip = `${s.title}\n${s.cwd}\nVoxStorm dışında açık (PID ${s.pid}) · ${s.status === 'waiting' ? waitText(s.waitingFor) : STATUS_TEXT[st]}\nİzlemek için tıkla`;
   const at = w ? w.attn : S.extAttn.get(s.sessionId);
   return `<li><button class="sess live ext ${w && w.id === S.active ? 'active' : ''}${attnCls(at)}" data-watch="${s.sessionId}" title="${esc(tip)}"><span class="dot ${st}"></span><span class="sess-t">${showDir ? `<span class="sess-dir">${esc(baseName(s.cwd))}</span> ` : ''}${esc(s.title)}</span><span class="sess-time ext-tag">dışarıda</span></button></li>`;
 }
@@ -668,8 +668,8 @@ function renderQueue() {
   const extCards = extWaiting().map(s => `<div class="card ext">
       <div class="card-top"><span class="chip">Dışarıda</span><button class="ghost who" data-watch="${s.sessionId}"><b>${esc(shorten(s.title, 60))}</b> · ${esc((projOfCwd(s.cwd) || {}).name || baseName(s.cwd))}</button></div>
       <div class="card-q">${esc(waitText(s.waitingFor))}</div>
-      <div class="card-n">Bu oturum Claudelot dışında açık; cevabı kendi penceresinden ver ya da oturumu buraya al.</div>
-      <div class="acts"><button class="btn" data-watch="${s.sessionId}">İzle</button><button class="btn" data-takeover="${s.sessionId}">Claudelot'a al</button></div></div>`).join('');
+      <div class="card-n">Bu oturum VoxStorm dışında açık; cevabı kendi penceresinden ver ya da oturumu buraya al.</div>
+      <div class="acts"><button class="btn" data-watch="${s.sessionId}">İzle</button><button class="btn" data-takeover="${s.sessionId}">VoxStorm'a al</button></div></div>`).join('');
   $('#queue').innerHTML = pendingCount() ? extCards + S.pending.map(d => {
     const t = tabById(d.tabId) || { title: '?' }, p = proj(t.projectId) || {};
     const label = { permission: 'İzin', plan: 'Plan', question: 'Soru' }[d.kind];
@@ -706,7 +706,7 @@ function renderStatus() {
   const claudeOk = INFO && INFO.claude;
   const u = S.usage;
   const usageChip = u ? `<button class="sb-chip" data-report="1" title="Bu hafta · aylık rapor için tıkla (Ctrl+Shift+R)"><i class="fa-solid fa-chart-column"></i> ${fmtTok(u.total)} token${u.cost != null ? ' · ≈ ' + fmtUsd(u.cost) : ''}</button>` : '';
-  $('#statusbar').innerHTML = `<span><b>${running}</b> çalışıyor</span><span><b>${pendingCount()}</b> karar bekliyor</span>${S.live.length ? `<span title="Claudelot dışında açık Claude oturumları"><b>${S.live.length}</b> dışarıda</span>` : ''}<span><b>${S.agents.length}</b> ajan / workflow</span><span><b>${S.tabs.filter(t => !t.exited).length}</b> açık terminal</span>`
+  $('#statusbar').innerHTML = `<span><b>${running}</b> çalışıyor</span><span><b>${pendingCount()}</b> karar bekliyor</span>${S.live.length ? `<span title="VoxStorm dışında açık Claude oturumları"><b>${S.live.length}</b> dışarıda</span>` : ''}<span><b>${S.agents.length}</b> ajan / workflow</span><span><b>${S.tabs.filter(t => !t.exited).length}</b> açık terminal</span>`
     + `<span style="margin-left:auto"></span>${usageChip}`
     + `<button class="sb-chip" data-settab="claude" title="Yeni Claude oturumlarının varsayılanları · değiştirmek için tıkla"><i class="fa-solid fa-sliders"></i> ${esc(claudeSummary())}</button>`
     + `<span class="${claudeOk ? '' : 'warn'}">${claudeOk ? 'Claude Code bağlı' : 'claude komutu bulunamadı'} · bildirim portu ${INFO ? INFO.hookPort : '-'}</span>`;
@@ -1647,6 +1647,7 @@ function setMode(m, initial) {
   $$('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
   $('#claudeView').hidden = m !== 'claude';
   $('#ideView').hidden = m !== 'ide';
+  $('#dbView').hidden = m !== 'db';
   const host = $('#termHost');
   (m === 'ide' ? $('#ideSlot') : $('#centerSlot')).appendChild(host);
   if (m === 'ide') {
@@ -1665,6 +1666,8 @@ function setMode(m, initial) {
   if (!initial) setCfg({ settings: { mode: m } });
   renderAll();
   requestAnimationFrame(() => { fitActive(); if (m === 'ide') IDE.cm.refresh(); });
+  // DB mode lives in db.js; it exposes window.dbMode = { show, hide }
+  if (window.dbMode) { if (m === 'db') window.dbMode.show(); else window.dbMode.hide(); }
 }
 
 /* ---------------- menus ---------------- */
@@ -1784,7 +1787,7 @@ function renderReport() {
     <table class="rep-t"><thead><tr><th>Ay</th><th class="n">Aktif gün</th><th class="n">Token</th><th class="n">≈ Dolar</th></tr></thead><tbody>
       ${[...months].reverse().map(ym => { const s = sumMonth(ym); return `<tr data-month="${ym}" class="${ym === m ? 'on' : ''}"><td>${monthLabel(ym)}</td><td class="n">${s.n}</td><td class="n">${fmtTok(s.t)}</td><td class="n">${fmtUsd(s.c)}</td></tr>`; }).join('')}
     </tbody></table>
-    <div class="rep-note">Dolar tutarları API liste fiyatıyla karşılıktır; abonelikte ayrıca ödenmez. Claude Code oturum kayıtlarını yaklaşık 30 gün sonra siler. Claudelot günlük toplamları kendi dosyasına da kaydeder; böylece geçmiş aylar uygulama kullanıldıkça birikir. Elindeki en eski kayıt: <b>${firstAvail ? monthLabel(firstAvail) : '–'}</b>.</div>`;
+    <div class="rep-note">Dolar tutarları API liste fiyatıyla karşılıktır; abonelikte ayrıca ödenmez. Claude Code oturum kayıtlarını yaklaşık 30 gün sonra siler. VoxStorm günlük toplamları kendi dosyasına da kaydeder; böylece geçmiş aylar uygulama kullanıldıkça birikir. Elindeki en eski kayıt: <b>${firstAvail ? monthLabel(firstAvail) : '–'}</b>.</div>`;
 }
 
 /* ---------------- settings ---------------- */
@@ -1817,7 +1820,7 @@ function updateHTML() {
   if (['manual', 'available', 'ready'].includes(u.status) && u.url) btns.push('<button class="btn" data-updpage><i class="fa-brands fa-github"></i> Sürüm sayfası</button>');
   if (u.kind && u.kind !== 'dev' && u.status !== 'checking' && u.status !== 'downloading') btns.push('<button class="btn" data-updcheck><i class="fa-solid fa-arrows-rotate"></i> Güncellemeleri denetle</button>');
   return `<h4>Sürüm</h4>
-    <div class="upd"><div class="upd-top"><b>Claudelot ${esc(u.current)}</b><span>${esc(UPD_KIND[u.kind] || '')}</span></div>
+    <div class="upd"><div class="upd-top"><b>VoxStorm ${esc(u.current)}</b><span>${esc(UPD_KIND[u.kind] || '')}</span></div>
       <div class="upd-line">${line}</div>${btns.length ? `<div class="upd-btns">${btns.join('')}</div>` : ''}
       ${u.notes && u.status !== 'none' ? `<details class="upd-notes"><summary>${esc(u.latest)} sürümündeki yenilikler</summary><pre>${esc(u.notes)}</pre></details>` : ''}</div>
     <div class="set-row"><span>Güncellemeleri kendiliğinden denetle<small>Açılışta ve 6 saatte bir GitHub'daki sürümlere bakar</small></span>${sw('data-upd="check"', up.check, 'Güncellemeleri denetle')}</div>
@@ -1827,8 +1830,8 @@ function renderUpdBtn() {
   const b = $('#updBtn'); if (!b || !UPD) return;
   b.hidden = !['ready', 'available', 'manual', 'downloading'].includes(UPD.status);
   b.classList.toggle('ready', UPD.status === 'ready');
-  b.title = UPD.status === 'ready' ? `Claudelot ${UPD.latest} hazır: yeniden başlatınca kurulur`
-    : UPD.status === 'downloading' ? `Claudelot ${UPD.latest} indiriliyor (%${Math.round(UPD.progress * 100)})` : `Claudelot ${UPD.latest} çıktı`;
+  b.title = UPD.status === 'ready' ? `VoxStorm ${UPD.latest} hazır: yeniden başlatınca kurulur`
+    : UPD.status === 'downloading' ? `VoxStorm ${UPD.latest} indiriliyor (%${Math.round(UPD.progress * 100)})` : `VoxStorm ${UPD.latest} çıktı`;
 }
 async function updateAction(d) {
   if (d.upd) { setCfg({ settings: { update: { [d.upd]: !Object.assign({ check: true, auto: true }, CFG.settings.update || {})[d.upd] } } }).then(renderSettings); return; }
@@ -1868,7 +1871,7 @@ function renderSettings() {
       <textarea id="fExtra" data-field="extra" rows="3" placeholder="Her satır bir talimat. Ör: Commit mesajlarını İngilizce yaz.">${esc(st.extra)}</textarea>
       <h4>Claude'a eklenecek metin</h4>
       <pre class="md" id="promptPrev">…</pre>
-      <p class="set-note">Bu metin Claudelot'tan başlatılan Claude oturumlarına eklenir. CLAUDE.md dosyalarına dokunulmaz. Değişiklik yeni açılan oturumlarda geçerli olur.</p>`;
+      <p class="set-note">Bu metin VoxStorm'tan başlatılan Claude oturumlarına eklenir. CLAUDE.md dosyalarına dokunulmaz. Değişiklik yeni açılan oturumlarda geçerli olur.</p>`;
   } else if (setTab === 'claude') {
     const c = CFG.settings.claude || {};
     const custom = c.model && !MODELS.some(([k]) => k === c.model);
@@ -1881,19 +1884,19 @@ function renderSettings() {
       <div class="pm-list">${PERM_MODES.map(([k, l, d]) => `<button class="pm ${(c.permissionMode || '') === k ? 'on' : ''} ${k === 'bypassPermissions' ? 'danger' : ''}" data-cpm="${k}"><b>${l}</b><small>${d}</small></button>`).join('')}</div>
       ${c.permissionMode === 'bypassPermissions' ? '<p class="set-warn">Dikkat: Claude hiçbir şey sormadan komut çalıştırır, dosya yazar ve siler. Sadece güvendiğin projelerde kullan. İlk açılışta Claude bir onay isteyebilir.</p>' : ''}
       <h4>Remote Control</h4>
-      <div class="set-row"><span>Oturumlar Remote Control açık başlasın<small>Oturumu claude.ai veya telefondaki Claude uygulamasından da sürdürebilirsin. Oturum adı: “proje · Claudelot”.</small></span>${sw('data-cset="remoteControl"', c.remoteControl, 'Remote Control')}</div>
-      <p class="set-note">Bu ayarlar Claudelot'tan yeni açılan ve devam ettirilen oturumlara uygulanır; açık oturumlar etkilenmez. Boş bırakılanlarda Claude Code kendi ayarını kullanır. Tek bir oturum için izin modunu “+ Oturum ▾” menüsünden de seçebilirsin.</p>
+      <div class="set-row"><span>Oturumlar Remote Control açık başlasın<small>Oturumu claude.ai veya telefondaki Claude uygulamasından da sürdürebilirsin. Oturum adı: “proje · VoxStorm”.</small></span>${sw('data-cset="remoteControl"', c.remoteControl, 'Remote Control')}</div>
+      <p class="set-note">Bu ayarlar VoxStorm'tan yeni açılan ve devam ettirilen oturumlara uygulanır; açık oturumlar etkilenmez. Boş bırakılanlarda Claude Code kendi ayarını kullanır. Tek bir oturum için izin modunu “+ Oturum ▾” menüsünden de seçebilirsin.</p>
       <h4>Oturum geçmişi ne kadar saklansın?</h4>
       <div class="seg">${[30, 90, 180, 365].map(n => `<button class="${(CLEANUP || 30) === n ? 'on' : ''}" data-cleanup="${n}">${n} gün${n === 30 ? ' (varsayılan)' : ''}</button>`).join('')}</div>
       ${CLEANUP && ![30, 90, 180, 365].includes(CLEANUP) ? `<p class="set-note">Şu anki değer: ${CLEANUP} gün.</p>` : ''}
-      <p class="set-note">Claude Code, bu süreden eski oturum kayıtlarını siler; silinen oturumlar geçmişte ve proje listesinde görünmez. Bu, <code>~/.claude/settings.json</code> içindeki <code>cleanupPeriodDays</code> ayarıdır; Claudelot dışında açtığın oturumlar için de geçerlidir. Daha önce silinenleri geri getirmez.</p>`;
+      <p class="set-note">Claude Code, bu süreden eski oturum kayıtlarını siler; silinen oturumlar geçmişte ve proje listesinde görünmez. Bu, <code>~/.claude/settings.json</code> içindeki <code>cleanupPeriodDays</code> ayarıdır; VoxStorm dışında açtığın oturumlar için de geçerlidir. Daha önce silinenleri geri getirmez.</p>`;
   } else if (setTab === 'tema') {
     const tc = st.termColors || 'windows';
     h = '<h4>Tema</h4>' + skinOptions()
       + `<h4>Terminal yazı renkleri</h4><div class="seg"><button class="${tc === 'windows' ? 'on' : ''}" data-termcolors="windows">Windows Terminal</button><button class="${tc === 'theme' ? 'on' : ''}" data-termcolors="theme">Temaya uyumlu</button></div><p class="set-note">Windows Terminal: Claude Code normal Windows terminalindeki renklerle görünür (beyaz yazı, mavi bağlantılar).</p>`;
   } else if (setTab === 'bildirim') {
     h = '<h4>Hangi durumlarda Windows bildirimi gelsin?</h4>' + Object.keys(NOTIF_LABELS).map(k => `<div class="set-row"><span>${NOTIF_LABELS[k]}</span>${sw(`data-notif="${k}"`, st.notif[k], NOTIF_LABELS[k])}</div>`).join('')
-      + (() => { const cur = !st.sound ? 'off' : (st.soundStyle || 'claudelot'); return `<h4>Bildirim sesi</h4><div class="seg">${[['claudelot', 'Claudelot sesi'], ['windows', 'Windows sesi'], ['off', 'Sessiz']].map(([k, l]) => `<button class="${cur === k ? 'on' : ''}" data-soundstyle="${k}">${l}</button>`).join('')}</div>`
+      + (() => { const cur = !st.sound ? 'off' : (st.soundStyle || 'claudelot'); return `<h4>Bildirim sesi</h4><div class="seg">${[['claudelot', 'VoxStorm sesi'], ['windows', 'Windows sesi'], ['off', 'Sessiz']].map(([k, l]) => `<button class="${cur === k ? 'on' : ''}" data-soundstyle="${k}">${l}</button>`).join('')}</div>`
         + (cur === 'claudelot' ? `<div class="chips" style="margin-top:8px"><button class="chip-btn" data-chime="done"><i class="fa-solid fa-play"></i> İş bitti</button><button class="chip-btn" data-chime="decision"><i class="fa-solid fa-play"></i> Karar bekliyor</button><button class="chip-btn" data-chime="subagent"><i class="fa-solid fa-play"></i> Ajan / workflow</button></div>` : ''); })()
       + '<p class="set-note">O an baktığın terminal için bildirim gösterilmez.</p>';
   } else if (setTab === 'pencere') {
@@ -1908,7 +1911,7 @@ function renderSettings() {
       <span>Bildirim portu</span><span><code>127.0.0.1:${INFO.hookPort}</code></span>
       <span>Hook ayarları</span><span><code>${esc(INFO.hookSettings)}</code></span>
       <span>Ek talimat dosyası</span><span><code>${esc(INFO.appendPrompt)}</code></span></div>
-      <p class="set-note">Claudelot, başlattığı her Claude oturumuna kendi hook ayarlarını <code>--settings</code> ile verir. Senin <code>~/.claude/settings.json</code> dosyan değiştirilmez. Uygulama dışında açılan oturumlar burada görünmez ama geçmişleri listelenir.</p>`;
+      <p class="set-note">VoxStorm, başlattığı her Claude oturumuna kendi hook ayarlarını <code>--settings</code> ile verir. Senin <code>~/.claude/settings.json</code> dosyan değiştirilmez. Uygulama dışında açılan oturumlar burada görünmez ama geçmişleri listelenir.</p>`;
   }
   $('#setBody').innerHTML = h;
   if (setTab === 'hitap') updatePromptPreview();
@@ -2247,8 +2250,9 @@ function cycleTabs(dir) {
   activate(list[(i + dir + list.length) % list.length].id);
 }
 const SHORTCUTS = [
-  { group: 'Genel', keys: 'Ctrl+1', label: 'Claude modu', run: () => setMode('claude') },
+  { group: 'Genel', keys: 'Ctrl+1', label: 'AI modu (Claude oturumları)', run: () => setMode('claude') },
   { group: 'Genel', keys: 'Ctrl+2', label: 'IDE modu', run: () => setMode('ide') },
+  { group: 'Genel', keys: 'Ctrl+3', label: 'Veritabanı (DB) modu', run: () => setMode('db') },
   { group: 'Genel', keys: 'Ctrl+Shift+P', label: 'Proje Başlat paneli', run: () => { if (!panelUi().side) togglePanel('side'); openStartPanel(); } },
   { group: 'Genel', keys: 'Ctrl+Shift+O', label: 'Karşılama ekranı', run: () => api.send('app:welcome') },
   { group: 'Genel', keys: 'Ctrl+,', label: 'Ayarlar', run: () => openSettings() },
@@ -2810,7 +2814,7 @@ async function init() {
   await refreshAllHistory();
   api.on('live-sessions', setLive);
   try { setLive(await api.invoke('live:list')); } catch (_) {}
-  setMode(CFG.settings.mode === 'ide' ? 'ide' : 'claude', true);
+  setMode(['ide', 'db'].includes(CFG.settings.mode) ? CFG.settings.mode : 'claude', true);
   refreshUsage();
   setInterval(refreshUsage, 120000);
   setInterval(renderSide, 60000);

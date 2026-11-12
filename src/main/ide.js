@@ -1,4 +1,4 @@
-// Claudelot — IDE helpers in the main process: project file index, text search,
+// VoxStorm — IDE helpers in the main process: project file index, text search,
 // file operations (rename, new folder, move to Recycle Bin), git status colours and
 // a folder watcher. Every path is checked with insideProject(), like fs:read / fs:write.
 const path = require('path');

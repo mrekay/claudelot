@@ -1,4 +1,4 @@
-// Draws the Claudelot mark (three stacked bars) into a raw bitmap,
+// Draws the VoxStorm mark (three stacked bars) into a raw bitmap,
 // so the app needs no image files for the window, tray and notifications.
 const { nativeImage } = require('electron');
 

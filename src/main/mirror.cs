@@ -1,5 +1,5 @@
-// Claudelot console mirror.
-// Attaches to the console of a process started outside Claudelot (a Claude Code session
+// VoxStorm console mirror.
+// Attaches to the console of a process started outside VoxStorm (a Claude Code session
 // running in cmd, PowerShell or Windows Terminal), streams its visible screen and types
 // keys into it. Compiled on first use with the csc.exe that ships with Windows.
 //
@@ -62,7 +62,7 @@ static class Mirror
     {
         uint pid;
         if (args.Length < 1 || !uint.TryParse(args[0], out pid)) return 2;
-        // grab the pipes from Claudelot before switching consoles
+        // grab the pipes from VoxStorm before switching consoles
         stdout = Console.OpenStandardOutput();
         var stdin = Console.OpenStandardInput();
         FreeConsole();
@@ -160,6 +160,6 @@ static class Mirror
             uint written;
             if (k > 0) WriteConsoleInput(inH, recs, (uint)k, out written);
         }
-        Environment.Exit(0); // Claudelot closed the pipe
+        Environment.Exit(0); // VoxStorm closed the pipe
     }
 }

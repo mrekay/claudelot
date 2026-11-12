@@ -1,4 +1,4 @@
-// Claudelot — main process
+// VoxStorm — main process
 // Window + tray, terminal processes (node-pty), Claude Code hook listener,
 // session history / usage from ~/.claude, project file access for IDE mode.
 const { app, BrowserWindow, Tray, Menu, ipcMain, Notification, dialog, shell, session } = require('electron');
@@ -12,11 +12,27 @@ const { execFile, execFileSync, spawn } = require('child_process');
 const pty = require('@lydell/node-pty');
 const { appIcon } = require('./icon');
 
+// The app used to be called Claudelot: on the first start under the new name, move the old
+// settings folder (%APPDATA%\Claudelot) over so projects, settings and usage history stay.
+(() => {
+  if (app.commandLine.hasSwitch('user-data-dir')) return;
+  const now = app.getPath('userData');
+  const old = path.join(app.getPath('appData'), 'Claudelot');
+  if (path.resolve(now).toLowerCase() === path.resolve(old).toLowerCase()) return;
+  if (fs.existsSync(path.join(now, 'config.json')) || !fs.existsSync(path.join(old, 'config.json'))) return;
+  try {
+    if (fs.existsSync(now)) fs.rmSync(now, { recursive: true, force: true }); // only what Electron created a moment ago
+    fs.renameSync(old, now);
+  } catch (_) {
+    app.setPath('userData', old); // the old folder is in use: keep using it, try again next time
+  }
+})();
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
   return;
 }
-app.setAppUserModelId('Claudelot');
+app.setAppUserModelId('VoxStorm');
 // notification chimes play from the (often hidden) window without a click first
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
@@ -45,7 +61,7 @@ const DEFAULTS = {
     closeToTray: true, autostart: false, sound: true, welcome: true,
     update: { check: true, auto: true }, // look for new releases on GitHub; download and install them
     soundStyle: 'claudelot', // 'claudelot': the app plays its own chime · 'windows': the system notification sound
-    // defaults for every Claude session Claudelot starts ('' = leave it to Claude Code)
+    // defaults for every Claude session VoxStorm starts ('' = leave it to Claude Code)
     claude: { model: '', effort: '', permissionMode: '', remoteControl: false },
     notif: { done: true, decision: true, subagent: true, workflow: true, quiet: false },
     skin: 'mono', mode: 'claude', termColors: 'windows',
@@ -223,7 +239,7 @@ async function discoverProjects() {
 /* ---------------- live sessions ----------------
    Claude Code keeps ~/.claude/sessions/<pid>.json for every running session, with
    its session id, folder and status (busy / idle / waiting). Sessions opened in an
-   outside terminal show up here, so Claudelot can follow them instead of starting
+   outside terminal show up here, so VoxStorm can follow them instead of starting
    a second copy with --resume. */
 const SESSIONS_DIR = path.join(CLAUDE_DIR, 'sessions');
 const SID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -362,7 +378,7 @@ async function tailTranscript(sessionId, offset) {
   return { offset: from + end + 1, entries, trimmed };
 }
 async function takeOver(sessionId) {
-  // close the outside copy so the conversation can continue in a Claudelot terminal
+  // close the outside copy so the conversation can continue in a VoxStorm terminal
   const s = liveList.find(x => x.sessionId === sessionId);
   if (!s) return { ok: true };
   try { process.kill(s.pid); } catch (e) { return { ok: false, error: 'Dışarıdaki oturum kapatılamadı: ' + e.message }; }
@@ -651,7 +667,7 @@ function startHookServer() {
 }
 
 /* ---------------- who the user is (git / GitHub) ----------------
-   Read once on first launch so Claudelot can address the user by name; kept in
+   Read once on first launch so VoxStorm can address the user by name; kept in
    config.identity as the starting point for the git / GitHub features. */
 function runQuiet(cmd, args, timeout = 4000) {
   return new Promise(res => {
@@ -726,7 +742,7 @@ const TONES = {
 const LANGS = { tr: 'Türkçe', en: 'İngilizce' };
 function buildAppendPrompt() {
   const s = config.settings;
-  const lines = ['Kullanıcı tercihleri (Claudelot):'];
+  const lines = ['Kullanıcı tercihleri (VoxStorm):'];
   if ((s.name || '').trim()) lines.push(`- Kullanıcıya "${s.name.trim()}" diye hitap et.`);
   if (TONES[s.tone]) lines.push('- ' + TONES[s.tone]);
   if (LANGS[s.lang]) lines.push(`- Yanıtlarını ${LANGS[s.lang]} ver.`);
@@ -753,7 +769,7 @@ function spawnTerminal(opts) {
     if (cs.model) args.push('--model', cs.model);
     if (cs.effort) args.push('--effort', cs.effort);
     if (cs.permissionMode) args.push('--permission-mode', cs.permissionMode);
-    if (cs.remoteControl) args.push('--remote-control', opts.rcName || 'Claudelot');
+    if (cs.remoteControl) args.push('--remote-control', opts.rcName || 'VoxStorm');
     writeAppendPrompt();
     args.push('--append-system-prompt-file', APPEND_PROMPT);
     if (exe.toLowerCase().endsWith('.cmd')) { file = 'cmd.exe'; args = ['/c', exe, ...args]; }
@@ -762,7 +778,7 @@ function spawnTerminal(opts) {
     const sh = findShell(opts.shell);
     file = sh.file; args = sh.args;
   }
-  // drop per-session markers in case Claudelot itself was started from inside a Claude Code session
+  // drop per-session markers in case VoxStorm itself was started from inside a Claude Code session
   const env = { ...process.env, CLAUDELOT: '1', FORCE_COLOR: '1' };
   for (const k of Object.keys(env)) if (k === 'CLAUDECODE' || /^CLAUDE_CODE_(CHILD_SESSION|ENTRYPOINT|SSE_PORT|SESSION_ID)/.test(k)) delete env[k];
   const p = pty.spawn(file, args, {
@@ -811,7 +827,7 @@ async function quitFlow() {
     if (win && !win.isVisible()) showWindow();
     const r = await dialog.showMessageBox(win, {
       type: 'question', buttons: ['Çık', 'Vazgeç'], defaultId: 1, cancelId: 1, noLink: true,
-      title: 'Claudelot', message: `${n} terminal hâlâ açık. Çıkılsın mı?`,
+      title: 'VoxStorm', message: `${n} terminal hâlâ açık. Çıkılsın mı?`,
       detail: 'Terminaller kapanır. Claude oturumları geçmişte kalır, sonra kaldığın yerden devam edebilirsin.',
     });
     if (r.response !== 0) return;
@@ -828,7 +844,7 @@ function showWelcome() {
   if (welcome && !welcome.isDestroyed()) { welcome.show(); welcome.focus(); return; }
   welcome = new BrowserWindow({
     width: 880, height: 580, resizable: false, maximizable: false, minimizable: true,
-    frame: false, backgroundColor: '#0b0a12', show: false, title: 'Claudelot', center: true,
+    frame: false, backgroundColor: '#0b0a12', show: false, title: 'VoxStorm', center: true,
     icon: appIcon(64, 1),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
@@ -853,7 +869,7 @@ async function welcomeData() {
 function rebuildTrayMenu() {
   if (!tray) return;
   const { running, pending } = trayStats;
-  tray.setToolTip(`Claudelot · ${running} çalışıyor · ${pending} karar bekliyor`);
+  tray.setToolTip(`VoxStorm · ${running} çalışıyor · ${pending} karar bekliyor`);
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: win && win.isVisible() ? 'Pencereyi gizle' : 'Pencereyi göster', click: () => (win.isVisible() ? win.hide() : showWindow()) },
     { label: 'Karşılama ekranı', click: () => showWelcome() },
@@ -873,7 +889,7 @@ function createTray() {
 function createWindow() {
   win = new BrowserWindow({
     width: 1440, height: 900, minWidth: 980, minHeight: 620,
-    frame: false, backgroundColor: '#0b0a12', show: false, title: 'Claudelot',
+    frame: false, backgroundColor: '#0b0a12', show: false, title: 'VoxStorm',
     icon: appIcon(64, 1),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
@@ -1012,7 +1028,7 @@ function registerIpc() {
     setTimeout(() => liveNotifications.delete(note), 60000);
     note.show();
   });
-  ipcMain.on('tray:update', (_e, stats) => { trayStats = stats; rebuildTrayMenu(); if (win) win.setTitle(stats.pending ? `(${stats.pending}) Claudelot` : 'Claudelot'); });
+  ipcMain.on('tray:update', (_e, stats) => { trayStats = stats; rebuildTrayMenu(); if (win) win.setTitle(stats.pending ? `(${stats.pending}) VoxStorm` : 'VoxStorm'); });
 
   ipcMain.handle('welcome:data', () => welcomeData());
   ipcMain.handle('welcome:addFolder', async () => {
