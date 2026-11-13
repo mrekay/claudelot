@@ -676,17 +676,19 @@ function renderSide() {
     const ext = outsideOf(p.id);
     const liveIds = new Set([...live.map(t => t.sessionId), ...ext.map(s => s.sessionId)].filter(Boolean));
     const hist = (S.history[p.id] || []).filter(h => !liveIds.has(h.id));
-    const limit = S.showAll[p.id] ? 40 : 5;
+    // only open sessions by default; past ones sit behind "+N oturum daha"
+    const limit = S.showAll[p.id] ? hist.length : 0;
     const items = live.map(t => `<li><button class="sess live ${t.id === S.active ? 'active' : ''}${attnCls(t.attn)}" data-tab="${t.id}" title="${esc(t.title)} · ${STATUS_TEXT[t.status]}">${tabIcon(t)}<span class="sess-t">${esc(t.title)}</span><span class="sess-badge ${t.status}">${STATUS_SHORT[t.status]}</span></button></li>`).join('')
       + ext.map(s => extRow(s)).join('')
       + hist.slice(0, limit).map(h => `<li><button class="sess" data-resume="${h.id}" data-pid="${p.id}" title="${esc(h.title)}&#10;Kaldığı yerden devam ettirmek için tıkla"><span class="dot idle"></span><span class="sess-t">${esc(h.title)}</span><span class="sess-time">${rel(h.mtime)}</span></button></li>`).join('')
-      + (hist.length > limit ? `<li><button class="sess-more" data-more="${p.id}">+ ${hist.length - limit} oturum daha</button></li>` : '')
+      + (hist.length > limit ? `<li><button class="sess-more" data-more="${p.id}" title="Geçmiş oturumları göster">+ ${hist.length - limit} oturum daha</button></li>`
+        : hist.length ? `<li><button class="sess-more" data-more="${p.id}" title="Geçmiş oturumları gizle">Geçmişi gizle</button></li>` : '')
       + (!live.length && !ext.length && !hist.length ? '<li class="empty-side" style="padding:4px 8px">Henüz oturum yok</li>' : '');
     return `<div class="proj ${isCollapsed(p.id) ? 'collapsed' : ''}">
       <div class="proj-row">
         <button class="proj-toggle" data-toggle="${p.id}">${chevron}<span class="proj-name">${esc(p.name)}</span><span class="proj-path" title="${esc(p.path)}">${esc(p.path)}</span></button>
         <button class="proj-more" data-projmenu="${p.id}" title="Proje seçenekleri" aria-label="Proje seçenekleri"><i class="fa-solid fa-ellipsis"></i></button>
-        <span class="split"><button class="new-btn" data-new="${p.id}" title="Bu projede yeni Claude oturumu başlat"><i class="fa-solid fa-plus"></i> Oturum</button><button class="new-btn caret" data-newmenu="${p.id}" title="Terminal ya da PowerShell aç" aria-label="Diğer terminal türleri"><i class="fa-solid fa-caret-down"></i></button></span>
+        <span class="split"><button class="new-btn" data-new="${p.id}" title="Bu projede yeni Claude oturumu başlat" aria-label="Yeni Claude oturumu"><i class="fa-solid fa-plus"></i></button><button class="new-btn caret" data-newmenu="${p.id}" title="Terminal ya da PowerShell aç" aria-label="Diğer terminal türleri"><i class="fa-solid fa-caret-down"></i></button></span>
       </div>
       ${syncLineHTML(p)}
       <ul class="sess-list">${items}</ul>
@@ -2082,7 +2084,7 @@ function bindEvents() {
       }
     }
     else if (d.toggle) { S.collapsed[d.toggle] = !isCollapsed(d.toggle); renderSide(); }
-    else if (d.more) { S.showAll[d.more] = true; renderSide(); }
+    else if (d.more) { S.showAll[d.more] = !S.showAll[d.more]; renderSide(); }
     else if (d.dec) decide(d.dec, d.c);
     else if (d.skin) { await setCfg({ settings: { skin: d.skin } }); applySkin(d.skin); renderSkinMenu(); renderSettings(); $('#skinMenu').hidden = true; }
     else if (d.proj) switchIdeProject(d.proj);
