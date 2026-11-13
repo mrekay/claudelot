@@ -44,7 +44,7 @@ function claudeSummary() {
   const parts = [];
   parts.push(c.model ? (MODELS.find(([k]) => k === c.model) || [0, c.model])[1].replace(' (en güncel)', '') : 'varsayılan model');
   if (c.effort) parts.push((EFFORTS.find(([k]) => k === c.effort) || [0, c.effort])[1].toLowerCase() + ' efor');
-  if (c.permissionMode) parts.push(c.permissionMode);
+  if (c.permissionMode) parts.push((PERM_MODES.find(([k]) => k === c.permissionMode) || [0, c.permissionMode])[1].toLocaleLowerCase('tr'));
   if (c.remoteControl) parts.push('RC açık');
   return parts.join(' · ');
 }
@@ -1782,7 +1782,7 @@ function placeMenu(m, btn) {
 }
 function openNewMenu(btn, pid, withHistory) {
   const m = $('#newMenu');
-  m.innerHTML = `<button data-newkind="claude" data-pid="${pid}"><span class="mi"><i class="mic fa-solid fa-terminal"></i>Claude oturumu</span><code>${esc(claudeSummary())}</code></button>`
+  m.innerHTML = `<button data-newkind="claude" data-pid="${pid}"><span class="mi"><i class="mic fa-solid fa-terminal"></i>Claude oturumu</span><code class="ell" title="${esc(claudeSummary())}">${esc(claudeSummary())}</code></button>`
     + `<div class="has-sub"><button class="sub-open" type="button"><span class="mi"><i class="mic fa-solid fa-user-shield"></i>İzin moduyla başlat</span><i class="fa-solid fa-chevron-right sub-ar"></i></button>`
     + `<div class="sub">${QUICK_MODES.map(([k, l]) => `<button data-newkind="claude" data-pm="${k}" data-pid="${pid}" class="${k === 'bypassPermissions' ? 'danger' : ''}"><span>${l}</span><code>${k}</code></button>`).join('')}</div></div>`
     + `<div class="sep"></div>`

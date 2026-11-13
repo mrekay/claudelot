@@ -623,6 +623,8 @@ kbd{font:10.5px var(--f-mono);opacity:.75;margin-left:4px}
 .md-view input[type=checkbox]{margin-right:6px}
 .new-menu{width:290px}
 .new-menu code{white-space:nowrap;margin-left:8px}
+.new-menu .mi{flex:none}
+.new-menu code.ell{min-width:0;overflow:hidden;text-overflow:ellipsis}
 /* git button + panel */
 .tb-left{display:flex;align-items:center;gap:10px;min-width:0;justify-self:start}
 .tb-left .brand{flex:none}
