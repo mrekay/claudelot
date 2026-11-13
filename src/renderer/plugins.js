@@ -202,23 +202,25 @@
 
   /* ---------------- buttons, modes, drawer ---------------- */
   const modeKey = (id, panelId) => `plugin:${id}:${panelId}`;
-  function renderButtons() {
+  function renderButtons(titleOnly) {
     const tb = document.getElementById('plugTb');
     if (tb) {
       let h = '';
       P.forEach(st => st.buttons.forEach(b => {
-        if (b.place !== 'titlebar') return;
+        if (b.place !== 'titlebar' || !pluginHere(st)) return;
         const on = b.panel && drawer && drawer.id === st.info.id && drawer.panelId === b.panel;
         h += `<button class="tb-btn plug-btn${on ? ' on' : ''}${b.label ? ' wide' : ''}" data-plbtn="${escH(st.info.id)}" data-plb="${escH(b.id)}" title="${escH(b.title || b.label || st.info.name)}" aria-label="${escH(b.title || b.label || st.info.name)}"><i class="${icon(b.icon || st.info.icon)}"></i>${b.label ? `<span>${escH(b.label)}</span>` : ''}${b.badge ? `<b class="badge">${escH(b.badge)}</b>` : ''}</button>`;
       }));
       tb.innerHTML = h;
     }
-    if (typeof renderStatus === 'function' && CFG) renderStatus();
+    if (!titleOnly && typeof renderStatus === 'function' && CFG) renderStatus();
   }
+  let lastCtx = '';
+  const renderTbOnly = () => renderButtons(true);
   function statusHtml() {
     let h = '';
     P.forEach(st => st.buttons.forEach(b => {
-      if (b.place !== 'statusbar') return;
+      if (b.place !== 'statusbar' || !pluginHere(st)) return;
       h += `<button class="sb-chip plug-sb" data-plbtn="${escH(st.info.id)}" data-plb="${escH(b.id)}" title="${escH(b.title || st.info.name)}"><i class="${icon(b.icon || st.info.icon)}"></i> ${escH(b.label)}${b.badge ? ` <b class="sec-v">${escH(b.badge)}</b>` : ''}</button>`;
     }));
     return h;
@@ -309,8 +311,12 @@
     if (!l) { l = document.createElement('div'); l.id = 'plugLayer'; l.className = 'plug-layer'; document.body.appendChild(l); }
     return l;
   }
-  // a project filter matches the project in view by its name or its folder name
-  function inContext(pn) {
+  // projects the user limited a plugin to in Settings (ids); empty means everywhere
+  const userProjects = st => ((LIST.list.find(x => x.id === st.info.id) || {}).projects || []);
+  const pluginHere = st => { const ids = userProjects(st); return !ids.length || ids.includes(contextProject()); };
+  // the user's choice wins; otherwise the plugin's own filter (project or folder names)
+  function inContext(pn, st) {
+    if (st && userProjects(st).length) return pluginHere(st);
     if (!pn.projects.length) return true;
     const p = S.projects.find(x => x.id === contextProject());
     if (!p) return false;
@@ -325,6 +331,7 @@
         if (!host || pn.secs[mode]) continue;
         const sec = document.createElement('section');
         sec.className = 'psec' + (isCollapsed(st, pn) ? ' collapsed' : '');
+        sec.dataset.plid = st.info.id; sec.dataset.panel = pn.id;
         sec.innerHTML = `<button class="psec-h panel-h" aria-expanded="${!isCollapsed(st, pn)}" title="${escH(st.info.name)} eklentisi · katlamak / açmak için tıkla"><span class="psec-t"><i class="${icon(pn.icon)}"></i>${escH(pn.title)}</span><i class="fa-solid fa-chevron-down psec-car"></i></button><div class="psec-b" style="height:${pn.height}px"></div>`;
         sec.querySelector('.psec-h').addEventListener('click', () => setCollapsed(st, pn, !sec.classList.contains('collapsed')));
         pn.secs[mode] = sec;
@@ -348,7 +355,7 @@
     P.forEach(st => st.panels.forEach(pn => {
       if (pn.place !== 'side') return;
       any = true;
-      const show = inContext(pn);
+      const show = inContext(pn, st);
       for (const [mode, sec] of Object.entries(pn.secs)) sec.hidden = !(show && S.mode === mode);
       const sec = show && pn.secs[S.mode];
       const slot = sec && !sec.classList.contains('collapsed') ? sec.querySelector('.psec-b') : null;
@@ -490,9 +497,12 @@
           <div class="pl-top"><b>${escH(p.name)}</b><span class="pl-v">${escH(p.version)}${p.author ? ' · ' + escH(p.author) : ''}</span></div>
           ${p.description ? `<div class="pl-d">${escH(p.description)}</div>` : ''}
           <div class="pl-perms">${perms}</div>
+          <div class="pl-projs"><i class="fa-solid fa-folder-tree"></i>${p.projects.length ? p.projects.map(id => (S.projects.find(x => x.id === id) || {}).name).filter(Boolean).map(n => `<span>${escH(n)}</span>`).join('') : '<em>Tüm projeler</em>'}</div>
           ${warn}${errs.length ? `<div class="pl-warn"><i class="fa-solid fa-bug"></i>${escH(errs[0].text)}</div>` : ''}
           <div class="pl-acts">
+            <button class="btn" data-plact="projects" data-plid="${escH(p.id)}"><i class="fa-solid fa-folder-tree"></i> Projeler</button>
             <button class="btn" data-plact="claude" data-plid="${escH(p.id)}"><i class="fa-solid fa-robot"></i> Claude ile düzenle</button>
+            <button class="btn" data-plact="export" data-plid="${escH(p.id)}"><i class="fa-solid fa-file-export"></i> Dışa aktar</button>
             <button class="btn" data-plact="reload" data-plid="${escH(p.id)}" ${p.enabled ? '' : 'disabled'}><i class="fa-solid fa-arrows-rotate"></i> Yeniden yükle</button>
             <button class="btn" data-plact="dir" data-plid="${escH(p.id)}"><i class="fa-regular fa-folder-open"></i> Klasörü aç</button>
             <button class="btn" data-plact="remove" data-plid="${escH(p.id)}"><i class="fa-regular fa-trash-can"></i> Kaldır</button>
@@ -505,6 +515,7 @@
       <div class="pl-bar">
         <button class="btn primary" data-plact="claude"><i class="fa-solid fa-robot"></i> Claude ile eklenti yaz</button>
         <button class="btn" data-plact="add"><i class="fa-solid fa-folder-plus"></i> Klasörden ekle</button>
+        <button class="btn" data-plact="zip"><i class="fa-solid fa-file-zipper"></i> Dosyadan ekle (.zip)</button>
         <button class="btn" data-plact="sample"><i class="fa-solid fa-wand-magic-sparkles"></i> Örnek eklenti oluştur</button>
         <button class="btn" data-plact="dir"><i class="fa-regular fa-folder-open"></i> Eklenti klasörü</button>
         <button class="btn" data-plact="reloadall"><i class="fa-solid fa-arrows-rotate"></i> Listeyi yenile</button>
@@ -552,6 +563,22 @@
       if (d.plact === 'claude') await claudeWrite(d.plid || '');
       else if (d.plact === 'reload') { await reload(d.plid); toast('Eklenti yeniden yüklendi', (LIST.list.find(x => x.id === d.plid) || {}).name || ''); }
       else if (d.plact === 'dir') await api.invoke('plugins:openDir', d.plid || '');
+      else if (d.plact === 'projects') {
+        const p = LIST.list.find(x => x.id === d.plid);
+        const pick = p && await uiChoose({
+          title: `${p.name}: projeler`, icon: 'fa-folder-tree', ok: 'Kaydet',
+          message: 'Eklenti hangi projelerde çalışsın?',
+          detail: 'Hiçbirini seçmezsen her projede çalışır. Seçince düğme ve bölümleri yalnızca bu projeler görünürken çıkar (AI modunda seçili oturumun projesi, IDE’de seçili proje); dosya ve komut erişimi de bu projelerin klasörleriyle sınırlanır.',
+          choices: S.projects.map(x => ({ value: x.id, label: x.name, hint: x.path, checked: p.projects.includes(x.id) })),
+        });
+        if (pick) { await api.invoke('plugins:setProjects', p.id, pick); await loadAll(); lastCtx = ''; renderTbOnly(); syncSide(); renderStatus(); }
+      } else if (d.plact === 'export') {
+        const r = await api.invoke('plugins:export', d.plid);
+        if (r) toast('Eklenti dışa aktarıldı', r.file);
+      } else if (d.plact === 'zip') {
+        const r = await api.invoke('plugins:addZip');
+        if (r) { stop(r.id); await loadAll(); toast('Eklenti eklendi', 'Kullanmak için listeden aç.'); }
+      }
       else if (d.plact === 'reloadall') await loadAll();
       else if (d.plact === 'remove') {
         const p = LIST.list.find(x => x.id === d.plid);
@@ -585,7 +612,7 @@
       emitState();
     },
     themeChanged() { const t = theme(); emitAll('theme', t); },
-    onRender() { syncSide(); clearTimeout(stateTimer); stateTimer = setTimeout(emitState, 150); },
+    onRender() { const c = String(contextProject()); if (c !== lastCtx) { lastCtx = c; renderTbOnly(); } syncSide(); clearTimeout(stateTimer); stateTimer = setTimeout(emitState, 150); },
     statusHtml,
     settingsHtml,
   };

@@ -86,6 +86,7 @@
             <button data-side="history" role="tab" title="Çalıştırılan sorgular"><i class="fa-solid fa-clock-rotate-left"></i>Geçmiş</button>
             <button data-side="saved" role="tab" title="Kayıtlı sorgular"><i class="fa-regular fa-bookmark"></i>Kayıtlı</button>
           </div>
+          <button class="db-ib" data-act="importConns" title="Projelerden içe aktar (.env, VNL config_definitions.php)" aria-label="Projelerden içe aktar"><i class="fa-solid fa-file-import"></i></button>
           <button class="db-ib" data-act="newConn" title="Yeni bağlantı" aria-label="Yeni bağlantı"><i class="fa-solid fa-plus"></i></button>
         </div>
         <div class="db-search"><i class="fa-solid fa-magnifying-glass"></i><input id="dbFilter" placeholder="Ara…" spellcheck="false" autocomplete="off" aria-label="Ara"><button class="db-ib sm" data-act="clearFilter" title="Temizle" hidden><i class="fa-solid fa-xmark"></i></button></div>
@@ -854,6 +855,32 @@
     if (!c && t && !t.connId && id2) setTabConn(t, id2);
     else if (id2) connect(id2, true);
   }
+  // connection details found in the projects' .env files and VNL config_definitions.php
+  async function importFromProjects() {
+    toast('Projeler taranıyor…', '.env ve config_definitions.php dosyaları okunuyor');
+    const r = await inv('db:scanProjects');
+    if (r.error) { toast('Taranamadı', r.error); return; }
+    const items = r.items || [];
+    if (!items.length) { uiAlert({ title: 'Bağlantı bulunamadı', message: 'Projelerin .env dosyalarında ve VNL config_definitions.php dosyalarında veritabanı bilgisi bulunamadı.' }); return; }
+    const fresh = items.filter(x => !x.exists);
+    const pick = await uiChoose({
+      title: 'Projelerden içe aktar', icon: 'fa-file-import', ok: 'İçe aktar',
+      message: fresh.length ? `${items.length} bağlantı bulundu. Eklemek istediklerini seç.` : 'Bulunan bağlantıların hepsi zaten ekli.',
+      detail: 'Parolalar da alınır ve Windows şifrelemesiyle saklanır. Bağlantılar test edilmeden eklenir.',
+      choices: items.map(x => ({
+        value: x.key, checked: !x.exists,
+        label: `${x.project}${x.label && !/^(DB_\*|PG|MYSQL_\*)$/.test(x.label) ? ' · ' + x.label : ''} — ${x.typeName} ${x.user ? x.user + '@' : ''}${x.host || 'localhost'}${x.port ? ':' + x.port : ''}${x.database ? ' / ' + x.database : ''}${x.exists ? '  (zaten ekli)' : ''}`,
+        hint: `${x.source} · ${x.sources.join(', ')}${x.hasPassword ? '' : ' · parola yok'}`,
+      })),
+    });
+    if (!pick || !pick.length) return;
+    const res = await inv('db:importFound', pick);
+    if (res.error) { toast('İçe aktarılamadı', res.error); return; }
+    if (res.warning) toast('Parola kaydedilmedi', res.warning);
+    await loadConns();
+    renderTree(); renderTabs(); renderBar(); renderStatus();
+    toast(res.added ? `${res.added} bağlantı eklendi` : 'Yeni bağlantı eklenmedi', res.added ? 'Gezginde listelendi; bağlanmak için tıkla.' : 'Seçilenler zaten ekliydi.');
+  }
   async function deleteConn(id) {
     const c = conn(id); if (!c) return;
     const r = await modal({ title: 'Bağlantıyı sil', icon: 'fa-trash', danger: true, body: `<p><b>${esc(c.name || c.host)}</b> bağlantısı ve kayıtlı parolası silinsin mi? Sunucudaki verilere dokunulmaz.</p>`, buttons: [['cancel', 'Vazgeç'], ['ok', 'Sil', 'danger']], focus: 'cancel' });
@@ -1072,6 +1099,7 @@
       if (a) {
         const act = a.dataset.act;
         if (act === 'newConn') editConn();
+        else if (act === 'importConns') importFromProjects();
         else if (act === 'run') run('auto');
         else if (act === 'runStmt') run('stmt');
         else if (act === 'cancel') cancelRun();

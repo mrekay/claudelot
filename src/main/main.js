@@ -1154,9 +1154,9 @@ function registerIpc() {
   // quick open, project search, rename / new folder / Recycle Bin, git colours, folder watcher
   require('./ide')({ ipcMain, shell, insideProject, send, isProjectRoot: p => config.projects.some(pr => norm(pr.path) === norm(p)) });
   // DB mode: connections, explorer, queries (closes its connections on quit)
-  require('./db')({ ipcMain, app, dialog, getWin: () => win, DATA });
+  require('./db')({ ipcMain, app, dialog, getWin: () => win, DATA, getProjects: () => config.projects });
   pluginsModule({
-    app, ipcMain, protocol, shell, dialog, getWin: () => win, DATA, insideProject,
+    app, ipcMain, protocol, shell, dialog, getWin: () => win, DATA, insideProject, getProjects: () => config.projects,
     // the plugins folder as a project, under a readable name the first time it is added
     ensureProject: (p, name) => {
       const known = config.projects.some(x => norm(x.path) === norm(p));

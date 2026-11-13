@@ -23,7 +23,7 @@ const pgm = () => pgLib || (pgLib = require('pg'));
 const mysql = () => mysqlLib || (mysqlLib = require('mysql2'));
 const isMy = t => t === 'mysql' || t === 'mariadb';
 
-module.exports = function registerDb({ ipcMain, app, dialog, getWin, DATA }) {
+module.exports = function registerDb({ ipcMain, app, dialog, getWin, DATA, getProjects = () => [] }) {
   const FILES = {
     conns: path.join(DATA, 'db-connections.json'),
     history: path.join(DATA, 'db-history.json'),
@@ -622,6 +622,55 @@ module.exports = function registerDb({ ipcMain, app, dialog, getWin, DATA }) {
     if (c.askPassword && c.pwd) delete c.pwd;
     write('conns', true);
     return { connection: publicConn(c), warning };
+  });
+  /* ---------------- import from projects (.env, VNL config_definitions.php) ---------------- */
+  // what a scan found, by key; passwords stay in this process and only "has a password" goes to the window
+  let found = new Map();
+  // MySQL and MariaDB speak the same protocol: a MariaDB connection matches a mysql .env entry
+  const family = t => (isMy(t) ? 'my' : t);
+  const sameConn = (a, b) => family(a.type) === family(b.type) && String(a.host || '').toLowerCase() === String(b.host || '').toLowerCase()
+    && (a.port || DEFAULT_PORT[a.type]) === (b.port || DEFAULT_PORT[b.type]) && (a.database || '') === (b.database || '') && (a.user || '') === (b.user || '');
+  handle('db:scanProjects', async () => {
+    const { scanProject } = require('./dbscan');
+    found = new Map();
+    const list = [];
+    for (const p of getProjects()) {
+      for (const e of await scanProject(p).catch(() => [])) {
+        // one entry per database even when several files point at it
+        const dup = list.find(x => x.projectId === e.projectId && sameConn(x, e) && x.password === e.password);
+        if (dup) { dup.sources.push(`${e.file}${e.label ? ' (' + e.label + ')' : ''}`); continue; }
+        list.push({ ...e, sources: [`${e.file}${e.label ? ' (' + e.label + ')' : ''}`] });
+      }
+    }
+    return {
+      items: list.map((e, i) => {
+        const key = 'f' + i;
+        found.set(key, e);
+        return {
+          key, project: e.project, label: e.label, source: e.source, sources: e.sources, type: e.type, typeName: TYPES[e.type],
+          host: e.host, port: e.port, database: e.database, user: e.user, hasPassword: !!e.password,
+          exists: conns().some(c => sameConn(c, e)),
+        };
+      }),
+    };
+  });
+  handle('db:importFound', keys => {
+    let added = 0, warning = '';
+    for (const key of Array.isArray(keys) ? keys : []) {
+      const e = found.get(key);
+      if (!e || conns().some(c => sameConn(c, e))) continue;
+      const name = `${e.project} · ${e.label && !/^(DB_\*|PG|MYSQL_\*)$/.test(e.label) ? e.label : e.database || e.host}`;
+      const c = { id: newId(), ...clean({ name, type: e.type, host: e.host, port: e.port, user: e.user, database: e.database }), created: Date.now() };
+      if (e.password) {
+        if (canEncrypt()) c.pwd = encrypt(e.password);
+        else { c.askPassword = true; memPw.set(c.id, e.password); warning = 'Windows şifreleme hizmeti kullanılamadığı için parolalar kaydedilmedi; bu oturum boyunca bellekte tutulacak.'; }
+      }
+      conns().push(c);
+      added++;
+    }
+    if (added) write('conns', true);
+    found = new Map();
+    return { added, warning };
   });
   handle('db:delete', async id => {
     await closeConn(id);
