@@ -129,7 +129,11 @@
       </div>
       <div class="ed-status" id="edStatus" hidden></div>
       <section class="bpanel" id="bpanel">
-        <div class="ptabs" id="ptabs"></div>
+        <div class="bp-grip" id="bpGrip" role="separator" aria-label="Panel boyutunu değiştir" title="Sürükle: boyutu değiştir · Çift tık: varsayılan boyut"></div>
+        <div class="bp-h">
+          <div class="ptabs" id="ptabs"></div>
+          <span class="bp-acts"><button class="ghost icon" data-tb="dock" id="bpDock" title="Paneli sağa al" aria-label="Paneli sağa al"><i class="fa-solid fa-table-columns"></i></button><button class="ghost icon" data-tb="panel" title="Paneli gizle (Ctrl+Shift+D)" aria-label="Claude panelini gizle"><i class="fa-solid fa-xmark"></i></button></span>
+        </div>
         <div class="term-slot" id="ideSlot"></div>
       </section>
     </main>
@@ -229,6 +233,7 @@
 <script src="../../node_modules/codemirror/mode/dockerfile/dockerfile.js"></script>
 <script src="../../node_modules/marked/lib/marked.umd.js"></script>
 <script src="../../node_modules/dompurify/dist/purify.min.js"></script>
+<script src="ui.js"></script>
 <script src="app.js"></script>
 <script src="db.js"></script>
 </body>

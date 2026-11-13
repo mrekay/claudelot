@@ -430,7 +430,7 @@ async function startMirror(sessionId) {
     while ((i = buf.indexOf('\n')) >= 0) {
       const line = buf.slice(0, i); buf = buf.slice(i + 1);
       const p = line.split(' ');
-      if (p[0] === 'F') send('mirror:frame', id, { cols: +p[1], rows: +p[2], cx: +p[3], cy: +p[4], vis: p[5] === '1', vt: Buffer.from(p[6] || '', 'base64').toString('utf8') });
+      if (p[0] === 'F') send('mirror:frame', id, { cols: +p[1], rows: +p[2], cx: +p[3], cy: +p[4], vis: p[5] === '1', off: +p[6], max: +p[7], vt: Buffer.from(p[8] || '', 'base64').toString('utf8') });
       else if (p[0] === 'E') send('mirror:error', id, 'Terminale bağlanılamadı (Windows hata kodu ' + p[1] + ').');
     }
   });
@@ -825,12 +825,18 @@ async function quitFlow() {
   const n = ptys.size;
   if (n > 0) {
     if (win && !win.isVisible()) showWindow();
-    const r = await dialog.showMessageBox(win, {
-      type: 'question', buttons: ['Çık', 'Vazgeç'], defaultId: 1, cancelId: 1, noLink: true,
-      title: 'VoxStorm', message: `${n} terminal hâlâ açık. Çıkılsın mı?`,
+    const opts = {
+      title: 'Çıkılsın mı?', message: `${n} terminal hâlâ açık.`, ok: 'Çık', danger: true, icon: 'fa-power-off',
       detail: 'Terminaller kapanır. Claude oturumları geçmişte kalır, sonra kaldığın yerden devam edebilirsin.',
-    });
-    if (r.response !== 0) return;
+    };
+    let yes;
+    // the app's own themed dialog; the system one only if the page cannot answer
+    try { yes = await win.webContents.executeJavaScript(`window.uiConfirm(${JSON.stringify(opts)})`, true); }
+    catch (_) {
+      const r = await dialog.showMessageBox(win, { type: 'question', buttons: ['Çık', 'Vazgeç'], defaultId: 1, cancelId: 1, noLink: true, title: 'VoxStorm', message: opts.message + ' Çıkılsın mı?', detail: opts.detail });
+      yes = r.response === 0;
+    }
+    if (!yes) return;
   }
   isQuitting = true;
   killAll();
@@ -1011,6 +1017,7 @@ function registerIpc() {
   ipcMain.handle('mirror:start', (_e, sid) => startMirror(sid));
   ipcMain.on('mirror:input', (_e, id, data) => mirrorInput(id, data));
   ipcMain.on('mirror:stop', (_e, id) => stopMirror(id));
+  ipcMain.on('mirror:scroll', (_e, id, n) => { const c = mirrors.get(id); if (c && Number.isFinite(n)) c.stdin.write('S ' + Math.max(0, Math.floor(n)) + '\n'); });
 
   ipcMain.handle('pty:spawn', (_e, opts) => spawnTerminal(opts));
   ipcMain.on('pty:write', (_e, id, data) => { const p = ptys.get(id); if (p) p.write(data); });

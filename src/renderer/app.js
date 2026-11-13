@@ -241,9 +241,12 @@ function activate(id) {
     else if (t.term) t.term.focus();
   });
 }
-function closeTab(id) {
-  const t = tabById(id); if (!t) return;
-  if (t.kind !== 'watch' && !t.exited && (t.status === 'running' || t.status === 'waiting') && !confirm(`"${t.title}" hâlâ çalışıyor. Terminal kapatılsın mı?\nClaude oturumu geçmişte kalır, sonra devam ettirebilirsin.`)) return;
+async function closeTab(id) {
+  let t = tabById(id); if (!t) return;
+  if (t.kind !== 'watch' && !t.exited && (t.status === 'running' || t.status === 'waiting')) {
+    if (!(await uiConfirm({ title: 'Terminal kapatılsın mı?', message: `"${t.title}" hâlâ çalışıyor.`, detail: 'Claude oturumu geçmişte kalır, sonra devam ettirebilirsin.', ok: 'Kapat', danger: true }))) return;
+    t = tabById(id); if (!t) return;
+  }
   if (t.kind === 'watch') { clearInterval(t.timer); if (t.mirror) api.send('mirror:stop', t.mirror); }
   else if (!t.exited) api.send('pty:kill', t.id);
   if (t.term) t.term.dispose();
@@ -476,7 +479,38 @@ function mirrorTerm(t) {
     cursorBlink: true, scrollback: 0, allowProposedApi: true, theme: termTheme(),
   });
   term.open(box);
-  term.onData(d => { if (t.mirror) api.send('mirror:input', t.mirror, d); });
+  term.onData(d => { if (t.mirror) { if (t.sReq) mirrorScroll(t, 0); api.send('mirror:input', t.mirror, d); } });
+  // scrolling: the history sits in the outside console's buffer, so ask the mirror for an
+  // older slice of it instead of scrolling the (scrollback-less) xterm
+  const bar = document.createElement('div');
+  bar.className = 'mscroll'; bar.hidden = true;
+  bar.innerHTML = '<div class="mthumb"></div>';
+  const live = document.createElement('button');
+  live.className = 'mlive'; live.hidden = true;
+  live.innerHTML = '<i class="fa-solid fa-arrow-down"></i> Canlıya dön';
+  live.onclick = () => { mirrorScroll(t, 0); term.focus(); };
+  box.append(bar, live);
+  let acc = 0;
+  box.addEventListener('wheel', e => {
+    e.preventDefault(); e.stopPropagation();
+    acc += e.deltaMode === 1 ? e.deltaY : e.deltaMode === 2 ? e.deltaY * term.rows : e.deltaY / 33;
+    const n = Math.trunc(acc); if (!n) return;
+    acc -= n;
+    mirrorScroll(t, (t.sReq || 0) - n);
+  }, { capture: true, passive: false });
+  const fromY = y => {
+    const r = bar.getBoundingClientRect(), total = t.sMax + term.rows;
+    const topRow = (y - r.top) / r.height * total - term.rows / 2;
+    mirrorScroll(t, t.sMax - topRow);
+  };
+  bar.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault(); bar.setPointerCapture(e.pointerId); bar.classList.add('drag');
+    fromY(e.clientY);
+    const move = ev => fromY(ev.clientY);
+    const up = () => { bar.classList.remove('drag'); bar.removeEventListener('pointermove', move); bar.removeEventListener('pointerup', up); bar.removeEventListener('pointercancel', up); };
+    bar.addEventListener('pointermove', move); bar.addEventListener('pointerup', up); bar.addEventListener('pointercancel', up);
+  });
   term.attachCustomKeyEventHandler(e => {
     if (e.type !== 'keydown') return true;
     const k = e.key.toLowerCase();
@@ -506,11 +540,31 @@ function fitMirrorFont(t, again) {
     if (!again) requestAnimationFrame(() => fitMirrorFont(t, true));
   }
 }
+function mirrorScroll(t, n) {
+  n = Math.max(0, Math.min(t.sMax || 0, Math.round(n)));
+  if (n === (t.sReq || 0)) return;
+  t.sReq = n;
+  if (t.mirror) api.send('mirror:scroll', t.mirror, n);
+}
+function renderMirrorScroll(t) {
+  const box = t.el.querySelector('.watch-term'), bar = box.querySelector('.mscroll'), live = box.querySelector('.mlive');
+  if (!bar) return;
+  const max = t.sMax || 0, off = t.sOff || 0, rows = t.term.rows, total = max + rows;
+  bar.hidden = !max;
+  live.hidden = !off;
+  if (!max) return;
+  const th = bar.firstChild;
+  th.style.height = Math.max(6, rows / total * 100) + '%';
+  th.style.top = Math.min(100 - rows / total * 100, (max - off) / total * 100) + '%';
+}
 function onMirrorFrame(t, f) {
   const first = t.mirrorState !== 'live';
   const term = mirrorTerm(t);
+  t.sMax = f.max || 0; t.sOff = f.off || 0;
+  if ((t.sReq || 0) > t.sMax) t.sReq = t.sMax;
   if (term.cols !== f.cols || term.rows !== f.rows) { term.resize(f.cols, f.rows); requestAnimationFrame(() => fitMirrorFont(t)); }
   term.write('\x1b[?25l\x1b[H' + f.vt + '\x1b[0m\x1b[J' + `\x1b[${f.cy + 1};${f.cx + 1}H` + (f.vis ? '\x1b[?25h' : ''));
+  renderMirrorScroll(t);
   if (first) {
     t.mirrorState = 'live';
     renderWatchBar(t);
@@ -582,7 +636,11 @@ async function takeOverSession(sid) {
   const s = S.live.find(x => x.sessionId === sid);
   if (!s) return continueHere(sid);
   const warn = s.status === 'busy' ? '\n\nDİKKAT: Oturum şu an çalışıyor; yarım kalan iş kesilir.' : '';
-  if (!confirm(`"${shorten(s.title, 60)}" şu an başka bir terminalde açık (PID ${s.pid}).\n\nVoxStorm'a almak için oradaki claude süreci kapatılacak, konuşma burada kaldığı yerden devam edecek.${warn}\n\nDevam edilsin mi?`)) return;
+  if (!(await uiConfirm({
+    title: "VoxStorm'a taşınsın mı?", ok: 'Taşı', danger: s.status === 'busy',
+    message: `"${shorten(s.title, 60)}" şu an başka bir terminalde açık (PID ${s.pid}).`,
+    detail: `VoxStorm'a almak için oradaki claude süreci kapatılacak, konuşma burada kaldığı yerden devam edecek.${warn}`,
+  }))) return;
   const r = await api.invoke('live:takeover', sid);
   if (!r || !r.ok) { toast('Devralınamadı', (r && r.error) || ''); return; }
   await continueHere(sid, s.cwd);
@@ -618,7 +676,7 @@ function renderSide() {
     const liveIds = new Set([...live.map(t => t.sessionId), ...ext.map(s => s.sessionId)].filter(Boolean));
     const hist = (S.history[p.id] || []).filter(h => !liveIds.has(h.id));
     const limit = S.showAll[p.id] ? 40 : 5;
-    const items = live.map(t => `<li><button class="sess live ${t.id === S.active ? 'active' : ''}${attnCls(t.attn)}" data-tab="${t.id}" title="${esc(t.title)} · ${STATUS_TEXT[t.status]}">${tabIcon(t)}<span class="sess-t">${esc(t.title)}</span><span class="sess-time">${STATUS_SHORT[t.status]}</span></button></li>`).join('')
+    const items = live.map(t => `<li><button class="sess live ${t.id === S.active ? 'active' : ''}${attnCls(t.attn)}" data-tab="${t.id}" title="${esc(t.title)} · ${STATUS_TEXT[t.status]}">${tabIcon(t)}<span class="sess-t">${esc(t.title)}</span><span class="sess-badge ${t.status}">${STATUS_SHORT[t.status]}</span></button></li>`).join('')
       + ext.map(s => extRow(s)).join('')
       + hist.slice(0, limit).map(h => `<li><button class="sess" data-resume="${h.id}" data-pid="${p.id}" title="${esc(h.title)}&#10;Kaldığı yerden devam ettirmek için tıkla"><span class="dot idle"></span><span class="sess-t">${esc(h.title)}</span><span class="sess-time">${rel(h.mtime)}</span></button></li>`).join('')
       + (hist.length > limit ? `<li><button class="sess-more" data-more="${p.id}">+ ${hist.length - limit} oturum daha</button></li>` : '')
@@ -636,7 +694,7 @@ function renderSide() {
   if (orphans.length || orphanTabs.length) {
     $('#side').insertAdjacentHTML('beforeend', `<div class="proj ext-group">
       <div class="proj-row"><span class="proj-toggle" title="VoxStorm'taki projelerin dışındaki klasörlerde açık oturumlar"><i class="fa-solid fa-eye chev" aria-hidden="true"></i><span class="proj-name">Diğer klasörler</span></span></div>
-      <ul class="sess-list">${orphans.map(s => extRow(s, true)).join('')}${orphanTabs.map(t => `<li><button class="sess live ${t.id === S.active ? 'active' : ''}" data-tab="${t.id}">${tabIcon(t)}<span class="sess-t">${esc(t.title)}</span><span class="sess-time">kapandı</span></button></li>`).join('')}</ul>
+      <ul class="sess-list">${orphans.map(s => extRow(s, true)).join('')}${orphanTabs.map(t => `<li><button class="sess live ${t.id === S.active ? 'active' : ''}" data-tab="${t.id}">${tabIcon(t)}<span class="sess-t">${esc(t.title)}</span><span class="sess-badge exited">kapandı</span></button></li>`).join('')}</ul>
     </div>`);
   }
 }
@@ -648,7 +706,9 @@ function extRow(s, showDir) {
 }
 function renderTabs() {
   const tabHTML = t => `<div class="tab ${t.id === S.active ? 'active' : ''}${attnCls(t.attn)}" role="tab"><button data-tab="${t.id}" title="${esc((proj(t.projectId) || {}).name)} · ${esc(t.title)} · ${STATUS_TEXT[t.status]}"><span class="tab-p">${esc((proj(t.projectId) || {}).name || '')}</span>${tabIcon(t)}<span class="tab-t">${esc(t.title)}</span></button><button class="tab-x" data-close="${t.id}" aria-label="Terminali kapat" title="Kapat">×</button></div>`;
-  $('#tabs').innerHTML = S.tabs.length ? S.tabs.map(tabHTML).join('') : '<span class="tabs-empty">Açık terminal yok</span>';
+  $('#tabs').innerHTML = S.tabs.length
+    ? S.tabs.map(tabHTML).join('') + '<button class="tabs-add" data-startnew="1" title="Yeni oturum (Ctrl+Shift+P)" aria-label="Yeni oturum aç"><i class="fa-solid fa-plus"></i></button>'
+    : '<span class="tabs-empty">Açık terminal yok</span><button class="tabs-add wide" data-startnew="1" title="Bir projede oturum başlat (Ctrl+Shift+P)"><i class="fa-solid fa-plus"></i> Oturum aç</button>';
   // IDE bottom panel: only the selected project's terminals
   const pt = S.tabs.filter(t => t.projectId === IDE.project);
   $('#ptabs').innerHTML = pt.map(t => `<button class="ptab ${t.id === S.active ? 'on' : ''}${attnCls(t.attn)}" data-tab="${t.id}" title="${esc(t.title)}">${tabIcon(t)}${esc(t.title)}</button>`).join('')
@@ -932,13 +992,15 @@ function showFile() {
   renderTree();
 }
 /* close several editor tabs, asking once about unsaved work */
-function closeFiles(list) {
+async function closeFiles(list) {
   list = list.filter(Boolean);
   if (!list.length) return false;
   const dirty = list.filter(isDirty);
-  if (dirty.length && !confirm(dirty.length === 1
-    ? `${baseName(dirty[0])} dosyasında kaydedilmemiş değişiklikler var. Yine de kapatılsın mı?`
-    : `${dirty.length} dosyada kaydedilmemiş değişiklikler var:\n${dirty.map(baseName).join(', ')}\n\nYine de kapatılsın mı?`)) return false;
+  if (dirty.length && !(await uiConfirm({
+    title: 'Kaydedilmemiş değişiklikler', ok: 'Kaydetmeden kapat', danger: true,
+    message: dirty.length === 1 ? `${baseName(dirty[0])} dosyasında kaydedilmemiş değişiklikler var.` : `${dirty.length} dosyada kaydedilmemiş değişiklikler var:\n${dirty.map(baseName).join(', ')}`,
+    detail: 'Yine de kapatılsın mı?',
+  }))) return false;
   const s = ist(), drop = new Set(list);
   const idx = s.tabs.indexOf(s.file);
   s.tabs = s.tabs.filter(x => !drop.has(x));
@@ -1177,7 +1239,17 @@ function switchIdeProject(pid) {
 }
 function applyIdeUi() {
   $('#ideView').classList.toggle('no-ex', !IDE.ui.ex);
-  $('#bpanel').hidden = !IDE.ui.panel;
+  const bp = $('#bpanel'), right = IDE.ui.dock === 'right';
+  bp.hidden = !IDE.ui.panel;
+  // docked right: the panel becomes its own grid column next to the editor
+  if (right && bp.parentElement !== $('#ideView')) $('.editor').after(bp);
+  else if (!right && bp.parentElement !== $('.editor')) $('.editor').appendChild(bp);
+  $('#ideView').classList.toggle('dock-r', right && IDE.ui.panel);
+  $('#ideView').style.setProperty('--pw', IDE.ui.pw + 'px');
+  bp.style.setProperty('--ph', IDE.ui.ph + 'px');
+  const dk = $('#bpDock'), tip = right ? 'Paneli alta al' : 'Paneli sağa al';
+  dk.title = tip; dk.setAttribute('aria-label', tip);
+  dk.innerHTML = right ? '<i class="fa-solid fa-table-columns fa-rotate-270"></i>' : '<i class="fa-solid fa-table-columns"></i>';
   $('#code').style.setProperty('--ed-size', IDE.ui.size + 'px');
   $('#tbEx').setAttribute('aria-pressed', IDE.ui.ex);
   $('#tbPanel').setAttribute('aria-pressed', IDE.ui.panel);
@@ -1474,7 +1546,7 @@ async function deleteEntry(fp, isDir) {
   const dirty = open.filter(isDirty);
   const msg = `“${baseName(fp)}” ${isDir ? 'klasörü ve içindekiler' : 'dosyası'} Geri Dönüşüm Kutusu’na taşınsın mı?`
     + (dirty.length ? `\n\nKaydedilmemiş değişiklikler kaybolacak: ${dirty.map(baseName).join(', ')}` : '');
-  if (!confirm(msg)) return;
+  if (!(await uiConfirm({ title: 'Silinsin mi?', message: msg, ok: 'Geri Dönüşüm Kutusu’na taşı', danger: true, icon: 'fa-trash-can' }))) return;
   try { await api.invoke('fs:trash', fp); } catch (e) { toast('Silinemedi', cleanErr(e)); return; }
   for (const st of Object.values(IDE.state)) {
     const idx = st.tabs.indexOf(st.file);
@@ -1552,6 +1624,27 @@ const ideKeysOk = e => S.mode === 'ide' && !(e.target.closest && e.target.closes
 
 function bindIde() {
   api.on('ide:fs-changed', onFsChanged);
+  // drag the panel edge: height when docked at the bottom, width when docked right
+  const grip = $('#bpGrip');
+  grip.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const right = IDE.ui.dock === 'right', bp = $('#bpanel'), view = $('#ideView');
+    const start = right ? e.clientX : e.clientY, from = right ? bp.offsetWidth : bp.offsetHeight;
+    const max = right ? view.clientWidth - 320 : $('.editor').clientHeight - 120;
+    grip.setPointerCapture(e.pointerId); grip.classList.add('drag'); view.classList.add('dragging');
+    const move = ev => {
+      const v = Math.round(Math.max(right ? 260 : 120, Math.min(max, from + start - (right ? ev.clientX : ev.clientY))));
+      if (right) { IDE.ui.pw = v; view.style.setProperty('--pw', v + 'px'); } else { IDE.ui.ph = v; bp.style.setProperty('--ph', v + 'px'); }
+    };
+    const up = () => {
+      grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', up); grip.removeEventListener('pointercancel', up);
+      grip.classList.remove('drag'); view.classList.remove('dragging');
+      saveIdeUi();
+    };
+    grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', up); grip.addEventListener('pointercancel', up);
+  });
+  grip.addEventListener('dblclick', () => { if (IDE.ui.dock === 'right') IDE.ui.pw = 440; else IDE.ui.ph = 260; saveIdeUi(); });
   $('#refreshTree').onclick = () => { IDE.dirCache = {}; delete IDE.index[IDE.project]; renderTree(); refreshGit(); };
   $('#exNewFile').onclick = () => newEntry(projRoot(), false);
   $('#exNewDir').onclick = () => newEntry(projRoot(), true);
@@ -1578,6 +1671,14 @@ function bindIde() {
     }
   });
   // editor tabs: middle click closes, right click opens the tab menu
+  // middle click closes a terminal tab, like a browser
+  for (const id of ['#tabs', '#ptabs']) {
+    $(id).addEventListener('mousedown', e => { if (e.button === 1) e.preventDefault(); }); // no autoscroll cursor
+    $(id).addEventListener('auxclick', e => {
+      const b = e.target.closest('[data-tab]');
+      if (b && e.button === 1) { e.preventDefault(); closeTab(b.dataset.tab); }
+    });
+  }
   $('#etabs').addEventListener('auxclick', e => { const t = e.target.closest('[data-etab]'); if (t && e.button === 1) { e.preventDefault(); closeFile(t.dataset.etab); } });
   $('#etabs').addEventListener('mousedown', e => { if (e.button === 1) e.preventDefault(); }); // no autoscroll cursor
   $('#etabs').addEventListener('contextmenu', e => { const t = e.target.closest('[data-etab]'); if (t) openIdeMenu(e, { kind: 'tab', path: t.dataset.etab }); });
@@ -1840,7 +1941,7 @@ async function updateAction(d) {
   else if (d.updpage !== undefined) { if (UPD && UPD.url) api.invoke('shell:openGithub', UPD.url); return; }
   else if (d.updgo !== undefined) {
     const open = S.tabs.filter(t => !t.exited && t.kind !== 'watch').length;
-    if (open && !confirm(`${open} terminal kapanacak. Claude oturumları yeni sürüm açılınca geri yüklenir.\n\nYeniden başlatıp güncellensin mi?`)) return;
+    if (open && !(await uiConfirm({ title: 'Güncellensin mi?', message: `${open} terminal kapanacak.`, detail: 'Claude oturumları yeni sürüm açılınca geri yüklenir.', ok: 'Yeniden başlat ve güncelle', icon: 'fa-rotate' }))) return;
     if (!(await api.invoke('update:restart'))) toast('Güncelleme başlatılamadı');
     return;
   }
@@ -1928,7 +2029,7 @@ function bindEvents() {
   document.addEventListener('click', async e => {
     const el = e.target.closest('button,[data-tab],tr[data-month]');
     if (!e.target.closest('#newMenu,[data-newmenu],[data-projmenu]')) $('#newMenu').hidden = true;
-    if (!$('#startPanel').hidden && !e.target.closest('#startPanel,#startBtn,#newMenu')) closeStartPanel();
+    if (!$('#startPanel').hidden && !e.target.closest('#startPanel,#startBtn,#newMenu,[data-startnew]')) closeStartPanel();
     if (e.target.closest('#newMenu [data-newkind],#newMenu [data-resume],#newMenu [data-pact]')) closeStartPanel();
     if (!e.target.closest('#skinMenu,#skinBtn')) $('#skinMenu').hidden = true;
     if (!e.target.closest('#pop,#bellBtn')) $('#pop').hidden = true;
@@ -1939,7 +2040,8 @@ function bindEvents() {
     const d = el.dataset;
     if (d.gsync) { runSync(d.gsync, d.act); return; }
     if (d.gitopen) { openGitFor(d.gitopen); return; }
-    if (d.panel) togglePanel(d.panel);
+    if (d.startnew) { if (!panelUi().side) { await setCfg({ settings: { ui: { side: true } } }); applyPanels(); } openStartPanel(); }
+    else if (d.panel) togglePanel(d.panel);
     else if (d.watch) { if (S.mode === 'claude' || S.mode === 'ide') openWatch(d.watch); }
     else if (d.takeover) takeOverSession(d.takeover);
     else if (d.continue) continueHere(d.continue);
@@ -1960,7 +2062,7 @@ function bindEvents() {
       if (d.pact === 'restore') restoreTabs(p.id);
       else if (d.pact === 'open') api.invoke('project:open', p.path);
       else if (d.pact === 'refresh') { await refreshHistory(p.id); renderSide(); }
-      else if (d.pact === 'remove' && confirm(`"${p.name}" listeden kaldırılsın mı?\nKlasör ve oturum geçmişi silinmez.`)) {
+      else if (d.pact === 'remove' && await uiConfirm({ title: 'Proje kaldırılsın mı?', message: `"${p.name}" listeden kaldırılsın mı?`, detail: 'Klasör ve oturum geçmişi silinmez.', ok: 'Kaldır', danger: true })) {
         S.projects = await api.invoke('project:remove', p.id); CFG.projects = S.projects;
         if (IDE.project === p.id) IDE.project = null;
         renderAll();
@@ -2110,6 +2212,7 @@ function toolbar(a) {
   else if (a === 'bigger') { IDE.ui.size = Math.min(22, IDE.ui.size + 1); saveIdeUi(); }
   else if (a === 'ex') { IDE.ui.ex = !IDE.ui.ex; saveIdeUi(); }
   else if (a === 'panel') { IDE.ui.panel = !IDE.ui.panel; saveIdeUi(); }
+  else if (a === 'dock') { IDE.ui.dock = IDE.ui.dock === 'right' ? 'bottom' : 'right'; IDE.ui.panel = true; saveIdeUi(); }
   else if (a === 'ask') askClaude();
 }
 
@@ -2803,7 +2906,7 @@ async function init() {
   CFG = r.config; INFO = r.info;
   S.projects = CFG.projects;
   IDE.state = CFG.ide.state || {};
-  IDE.ui = Object.assign({ ex: true, panel: true, size: 13, wrap: false }, CFG.ide.ui || {});
+  IDE.ui = Object.assign({ ex: true, panel: true, size: 13, wrap: false, dock: 'bottom', ph: 260, pw: 440 }, CFG.ide.ui || {});
   applySkin(CFG.settings.skin);
   setupEditor();
   bindEvents();

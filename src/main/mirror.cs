@@ -3,9 +3,10 @@
 // running in cmd, PowerShell or Windows Terminal), streams its visible screen and types
 // keys into it. Compiled on first use with the csc.exe that ships with Windows.
 //
-// stdout, one line per change:  F <cols> <rows> <cursorX> <cursorY> <cursorVisible 0|1> <base64 utf-8 VT text>
+// stdout, one line per change:  F <cols> <rows> <cursorX> <cursorY> <cursorVisible 0|1> <scrolled> <maxScroll> <base64 utf-8 VT text>
 //                               E <win32 error code>   (could not attach)
 // stdin, one line per batch:    I <vk> <char> <ctrlState> [<vk> <char> <ctrlState> ...]
+//                               S <lines>   (show the buffer this many lines above the window; 0 = live)
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -50,6 +51,8 @@ static class Mirror
     const uint GENERIC_READ = 0x80000000, GENERIC_WRITE = 0x40000000, SHARE_RW = 3, OPEN_EXISTING = 3;
     static readonly int[] WinToAnsi = { 0, 4, 2, 6, 1, 5, 3, 7 };
     static Stream stdout;
+    static volatile int scrollReq;
+    static volatile bool wake;
     static readonly object outLock = new object();
 
     static void Emit(string line)
@@ -83,7 +86,8 @@ static class Mirror
             string frame = ReadFrame(outH);
             if (frame == null) { if (++idle > 40) return 0; }
             else { idle = 0; if (frame != last) { Emit(frame); last = frame; } }
-            Thread.Sleep(70);
+            for (int i = 0; i < 7 && !wake; i++) Thread.Sleep(10); // a scroll request answers at once
+            wake = false;
         }
     }
 
@@ -93,6 +97,10 @@ static class Mirror
         if (!GetConsoleScreenBufferInfo(h, out info)) return null;
         int cols = info.Window.Right - info.Window.Left + 1, rows = info.Window.Bottom - info.Window.Top + 1;
         if (cols <= 0 || rows <= 0) return null;
+        // history above the window lives in the console buffer (classic console host;
+        // Windows Terminal keeps its own history, so there is nothing to read there)
+        int maxScroll = info.Window.Top, off = Math.Max(0, Math.Min(scrollReq, maxScroll));
+        int top = info.Window.Top - off;
         var cells = new CHAR_INFO[cols * rows];
         // read in strips; one large call can fail on very wide consoles
         int strip = Math.Max(1, 12000 / cols);
@@ -100,13 +108,14 @@ static class Mirror
         {
             int n = Math.Min(strip, rows - y);
             var part = new CHAR_INFO[cols * n];
-            var region = new SMALL_RECT { Left = info.Window.Left, Top = (short)(info.Window.Top + y), Right = info.Window.Right, Bottom = (short)(info.Window.Top + y + n - 1) };
+            var region = new SMALL_RECT { Left = info.Window.Left, Top = (short)(top + y), Right = info.Window.Right, Bottom = (short)(top + y + n - 1) };
             if (!ReadConsoleOutput(h, part, new COORD((short)cols, (short)n), new COORD(0, 0), ref region)) return null;
             Array.Copy(part, 0, cells, y * cols, part.Length);
         }
         CURSOR_INFO ci;
         bool vis = GetConsoleCursorInfo(h, out ci) && ci.Visible != 0;
-        int cx = info.Cursor.X - info.Window.Left, cy = info.Cursor.Y - info.Window.Top;
+        int cx = info.Cursor.X - info.Window.Left, cy = info.Cursor.Y - top;
+        if (off > 0 || cy < 0 || cy >= rows) { vis = false; cy = Math.Max(0, Math.Min(rows - 1, cy)); }
         var sb = new StringBuilder(cols * rows + 256);
         for (int r = 0; r < rows; r++)
         {
@@ -125,7 +134,7 @@ static class Mirror
             if (r < rows - 1) sb.Append("\r\n");
         }
         string vt = Convert.ToBase64String(Encoding.UTF8.GetBytes(sb.ToString()));
-        return "F " + cols + " " + rows + " " + cx + " " + cy + " " + (vis ? 1 : 0) + " " + vt;
+        return "F " + cols + " " + rows + " " + cx + " " + cy + " " + (vis ? 1 : 0) + " " + off + " " + maxScroll + " " + vt;
     }
 
     static string Sgr(int a)
@@ -146,6 +155,7 @@ static class Mirror
         string line;
         while ((line = r.ReadLine()) != null)
         {
+            if (line.StartsWith("S ")) { int n; if (int.TryParse(line.Substring(2), out n)) { scrollReq = Math.Max(0, n); wake = true; } continue; }
             if (!line.StartsWith("I ")) continue;
             var p = line.Substring(2).Split(' ');
             var recs = new INPUT_RECORD[(p.Length / 3) * 2];
