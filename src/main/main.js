@@ -1,7 +1,7 @@
 // VoxStorm — main process
 // Window + tray, terminal processes (node-pty), Claude Code hook listener,
 // session history / usage from ~/.claude, project file access for IDE mode.
-const { app, BrowserWindow, Tray, Menu, ipcMain, Notification, dialog, shell, session } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, Notification, dialog, shell, session, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
@@ -11,6 +11,8 @@ const crypto = require('crypto');
 const { execFile, execFileSync, spawn } = require('child_process');
 const pty = require('@lydell/node-pty');
 const { appIcon } = require('./icon');
+const pluginsModule = require('./plugins');
+pluginsModule.registerScheme(protocol); // custom schemes must be registered before 'ready'
 
 // The app used to be called Claudelot: on the first start under the new name, move the old
 // settings folder (%APPDATA%\Claudelot) over so projects, settings and usage history stay.
@@ -145,7 +147,46 @@ function textOf(content) {
   return '';
 }
 
+async function readTail(file, bytes) {
+  const fh = await fsp.open(file, 'r');
+  try {
+    const { size } = await fh.stat();
+    const n = Math.min(bytes, size), buf = Buffer.alloc(n);
+    const { bytesRead } = await fh.read(buf, 0, n, size - n);
+    return buf.slice(0, bytesRead).toString('utf8');
+  } finally { await fh.close(); }
+}
+
 /* ---------------- session history ---------------- */
+// the transcript of a session: under its project folder first, otherwise any project folder
+async function findSessionFile(sessionId, projectPath) {
+  if (!/^[\w-]+$/.test(String(sessionId || ''))) return null;
+  const name = sessionId + '.jsonl';
+  if (projectPath) {
+    const f = path.join(PROJECTS_DIR, encodeProjectDir(projectPath), name);
+    try { await fsp.access(f); return f; } catch (_) {}
+  }
+  let dirs = [];
+  try { dirs = await fsp.readdir(PROJECTS_DIR, { withFileTypes: true }); } catch (_) { return null; }
+  for (const d of dirs) {
+    if (!d.isDirectory()) continue;
+    const f = path.join(PROJECTS_DIR, d.name, name);
+    try { await fsp.access(f); return f; } catch (_) {}
+  }
+  return null;
+}
+// the same record Claude Code's /rename appends, so the name also shows in its own /resume list
+async function renameSession(sessionId, projectPath, title) {
+  const t = String(title || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (!t) return { ok: false, error: 'Ad boş olamaz.' };
+  const file = await findSessionFile(sessionId, projectPath);
+  if (!file) return { ok: false, error: 'Oturum dosyası bulunamadı.' };
+  let lead = '';
+  try { const end = await readTail(file, 1); if (end && end !== '\n') lead = '\n'; } catch (_) {}
+  await fsp.appendFile(file, lead + JSON.stringify({ type: 'custom-title', customTitle: t, sessionId }) + '\n', 'utf8');
+  titleCache.delete(file);
+  return { ok: true, title: t };
+}
 const titleCache = new Map(); // file -> {mtime, title, cwd}
 async function sessionMeta(file, mtimeMs) {
   const c = titleCache.get(file);
@@ -163,6 +204,18 @@ async function sessionMeta(file, mtimeMs) {
         if (t && !t.startsWith('<') && !t.startsWith('Caveat:')) title = t;
       }
       if (title && cwd) break;
+    }
+    // a rename (Claude Code's /rename or ours) is appended, so the newest one is near the end
+    const st = await fsp.stat(file);
+    if (st.size > 256 * 1024) custom = '';
+    const tail = st.size > 256 * 1024 ? await readTail(file, 128 * 1024) : head;
+    for (const line of tail.split('\n')) {
+      if (!line.includes('"custom-title"')) continue;
+      try { const o = JSON.parse(line); if (o.type === 'custom-title' && typeof o.customTitle === 'string') custom = o.customTitle; } catch (_) {}
+    }
+    if (!custom && st.size > 256 * 1024) for (const line of head.split('\n')) {
+      if (!line.includes('"custom-title"')) continue;
+      try { const o = JSON.parse(line); if (o.type === 'custom-title' && o.customTitle) custom = o.customTitle; } catch (_) {}
     }
   } catch (_) {}
   const meta = { mtime: mtimeMs, title: (custom || title || 'Adsız oturum').replace(/\s+/g, ' ').slice(0, 120), cwd };
@@ -916,8 +969,13 @@ function createWindow() {
   win.on('unmaximize', () => send('win:state', { maximized: false }));
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.on('will-navigate', e => e.preventDefault());
-  // if the UI reloads it loses its terminals, so don't leave orphan processes behind
-  win.webContents.on('did-start-loading', () => killAll());
+  // if the UI reloads it loses its terminals, so don't leave orphan processes behind. Only for the page
+  // itself: 'did-start-loading' also fires for every iframe (plugin panels), which killed all terminals.
+  win.webContents.on('did-start-navigation', (e, url, inPlace, isMain) => {
+    const mainFrame = typeof e.isMainFrame === 'boolean' ? e.isMainFrame : isMain;
+    const sameDoc = typeof e.isSameDocument === 'boolean' ? e.isSameDocument : inPlace;
+    if (mainFrame && !sameDoc) killAll();
+  });
 }
 function appMenu() {
   // keeps copy/paste shortcuts working, removes reload shortcuts that would wipe terminals
@@ -1010,6 +1068,7 @@ function registerIpc() {
   ipcMain.handle('shell:openGithub', (_e, url) => { if (/^https:\/\/github\.com\//i.test(String(url))) shell.openExternal(url); });
 
   ipcMain.handle('history:list', (_e, projectPath) => listSessions(projectPath));
+  ipcMain.handle('session:rename', (_e, sessionId, projectPath, title) => renameSession(sessionId, projectPath, title));
   ipcMain.handle('usage:get', () => computeUsage());
   ipcMain.handle('live:list', () => scanLive());
   ipcMain.handle('live:tail', (_e, sid, offset) => tailTranscript(sid, offset));
@@ -1096,6 +1155,16 @@ function registerIpc() {
   require('./ide')({ ipcMain, shell, insideProject, send, isProjectRoot: p => config.projects.some(pr => norm(pr.path) === norm(p)) });
   // DB mode: connections, explorer, queries (closes its connections on quit)
   require('./db')({ ipcMain, app, dialog, getWin: () => win, DATA });
+  pluginsModule({
+    app, ipcMain, protocol, shell, dialog, getWin: () => win, DATA, insideProject,
+    // the plugins folder as a project, under a readable name the first time it is added
+    ensureProject: (p, name) => {
+      const known = config.projects.some(x => norm(x.path) === norm(p));
+      const pr = addProject(p);
+      if (!known) { pr.name = name; saveConfig(); send('projects-changed', config.projects); }
+      return pr;
+    },
+  });
 }
 function addProject(p, auto) {
   const full = path.resolve(p);

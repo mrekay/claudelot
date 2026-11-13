@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<style>
+  body{padding:22px 26px;overflow:auto}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-top:14px}
+  .card b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .st{display:inline-block;margin-top:6px;font-size:11px;font-weight:600;padding:0 8px;border-radius:999px;background:var(--hover);color:var(--muted)}
+  .st.running{background:var(--accent-soft);color:var(--accent)}
+  .st.waiting{background:var(--warn-soft);color:var(--warn)}
+  .st.done{background:var(--ok-soft);color:var(--ok)}
+  .card.active{border-color:var(--accent)}
+</style>
+</head>
+<body>
+  <h1>Pano</h1>
+  <div class="muted" id="sum"></div>
+  <div class="grid" id="grid"></div>
+<script>
+  // a mode tab: VoxStorm sends a "state" event whenever sessions, projects or the mode change
+  const ST = { running: 'çalışıyor', waiting: 'bekliyor', done: 'bitti', idle: 'açık', exited: 'kapandı', shell: 'terminal' };
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  function render(s) {
+    if (!s) return;
+    const name = id => (s.projects.find(p => p.id === id) || {}).name || '';
+    document.getElementById('sum').textContent = `${s.projects.length} proje · ${s.sessions.length} açık terminal · ${s.pending} karar bekliyor`;
+    document.getElementById('grid').innerHTML = s.sessions.length
+      ? s.sessions.map(t => `<div class="card${t.active ? ' active' : ''}"><b>${esc(t.title)}</b><span class="muted">${esc(name(t.projectId))}</span><br><span class="st ${esc(t.status)}">${ST[t.status] || esc(t.status)}</span></div>`).join('')
+      : '<p class="muted">Açık oturum yok. AI modundan bir oturum başlat.</p>';
+  }
+  vox.on('state', render);
+  vox.ready.then(info => render(info.state));
+</script>
+</body>
+</html>

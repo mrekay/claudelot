@@ -2,7 +2,7 @@
 <html lang="tr">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data:; frame-src voxplugin:">
 <title>VoxStorm</title>
 <link rel="stylesheet" href="../../node_modules/@fortawesome/fontawesome-free/css/all.min.css">
 <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css">
@@ -23,6 +23,7 @@
       <button role="tab" data-mode="db" title="Veritabanı modu (Ctrl+3)"><i class="fa-solid fa-database"></i>DB</button>
     </div>
     <div class="tb-right">
+      <span class="plug-tb" id="plugTb"></span>
       <button class="tb-btn upd-btn" id="updBtn" hidden aria-label="Güncelleme"><i class="fa-solid fa-circle-arrow-up"></i></button>
       <button class="tb-btn" id="setBtn" title="Ayarlar (Ctrl+,)" aria-label="Ayarlar"><i class="fa-solid fa-gear"></i></button>
       <button class="tb-btn" id="skinBtn" title="Tema" aria-label="Tema"><i class="fa-solid fa-palette"></i></button>
@@ -69,6 +70,7 @@
       <div class="queue-scroll" id="queue"></div>
     </aside>
     <button class="sec-bar" id="queueBar" data-panel="queue" hidden title="Kararları göster (Ctrl+Shift+D)"><i class="fa-solid fa-hand"></i><span>Kararını bekleyenler</span><b class="sec-v warn" id="queueBarV"></b><i class="fa-solid fa-chevron-down sec-car"></i></button>
+    <div class="plug-side" id="plugSide" hidden></div>
     <div class="agents" id="agentsPanel">
       <div class="panel-h">Aktif ajanlar ve workflow'lar <span class="ph-acts"><button class="ghost icon" data-panel="agents" title="Gizle (Ctrl+Shift+J)" aria-label="Ajanlar bölümünü gizle"><i class="fa-solid fa-eye-slash"></i></button></span></div>
       <div id="agents"></div>
@@ -116,6 +118,7 @@
         <div class="ps-sum" id="psSum" aria-live="polite"></div>
         <div class="ps-res" id="psRes"></div>
       </div>
+      <div class="plug-side plug-side-ide" id="plugSideIde" hidden></div>
     </aside>
     <main class="editor">
       <div class="etabs" id="etabs" role="tablist" aria-label="Açık dosyalar"></div>
@@ -149,6 +152,8 @@
 
   <!-- DB MODE: filled by db.js -->
   <div class="db" id="dbView" hidden></div>
+  <div class="plug-view" id="plugView" hidden></div>
+  <aside class="plug-drawer" id="plugDrawer" hidden aria-label="Eklenti paneli"><div class="pd-h"><span class="pd-t"></span><button class="ghost icon" data-plclose="1" title="Kapat (Esc)" aria-label="Paneli kapat"><i class="fa-solid fa-xmark"></i></button></div><div class="pd-body"></div></aside>
 
   <div class="statusbar" id="statusbar"></div>
 
@@ -223,6 +228,7 @@
 <script src="../../node_modules/codemirror/mode/markdown/markdown.js"></script>
 <script src="../../node_modules/codemirror/mode/python/python.js"></script>
 <script src="../../node_modules/codemirror/mode/clike/clike.js"></script>
+<script src="../../node_modules/codemirror/mode/php/php.js"></script>
 <script src="../../node_modules/codemirror/mode/go/go.js"></script>
 <script src="../../node_modules/codemirror/mode/rust/rust.js"></script>
 <script src="../../node_modules/codemirror/mode/shell/shell.js"></script>
@@ -236,5 +242,6 @@
 <script src="ui.js"></script>
 <script src="app.js"></script>
 <script src="db.js"></script>
+<script src="plugins.js"></script>
 </body>
 </html>

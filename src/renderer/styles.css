@@ -136,6 +136,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .sess-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sess-time{font-size:11px;color:var(--muted);flex:none;font-variant-numeric:tabular-nums}
 .sess-badge{flex:none;font-size:10px;font-weight:600;line-height:16px;padding:0 6px;border-radius:999px;background:var(--hover);color:var(--muted);border:1px solid var(--line);white-space:nowrap}
+.sess-badge.idle,.sess-badge.shell{background:var(--violet-soft);color:var(--violet);border-color:transparent}
 .sess-badge.running{background:var(--accent-soft);color:var(--run);border-color:transparent}
 .sess-badge.waiting{background:var(--warn-soft);color:var(--warn);border-color:transparent}
 .sess-badge.done{background:var(--ok-soft);color:var(--ok);border-color:transparent}
@@ -980,7 +981,66 @@ kbd{font:10.5px var(--f-mono);opacity:.75;margin-left:4px}
 .ui-dlg.danger .ui-dlg-h i{color:var(--warn)}
 .ui-dlg-m{padding:4px 18px 4px 44px;font-size:13px;line-height:1.55;overflow-wrap:anywhere;max-height:50vh;overflow:auto}
 .ui-dlg-m p{margin:8px 0 0;color:var(--muted);font-size:12.5px}
+.ui-dlg-in{display:block;width:100%;box-sizing:border-box;margin:10px 0 2px;padding:7px 10px;font:inherit;font-size:13px;color:var(--fg);background:var(--surface-2);border:1px solid var(--line);border-radius:7px;outline:none}
+.ui-dlg-in:focus{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 25%,transparent)}
 .ui-dlg-f{display:flex;justify-content:flex-end;gap:8px;padding:14px 18px 16px}
 .ui-dlg-f .btn{padding:6px 14px;font-size:12.5px;min-width:84px}
 .ui-dlg-f .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .btn.primary.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+
+/* ---------------- plugins (plugins.js) ---------------- */
+.plug-tb{display:contents}
+.plug-btn.wide{display:flex;gap:6px;padding:0 10px;font-size:12px}
+.plug-btn.on{color:var(--accent)}
+.plug-worker{position:absolute;width:0;height:0;border:0;visibility:hidden}
+.plug-view{flex:1;min-height:0;display:flex;background:var(--bg)}
+.plug-view[hidden],.plug-drawer[hidden],.plug-frame[hidden]{display:none}
+.plug-frame{flex:1;width:100%;height:100%;border:0;background:var(--bg);color-scheme:normal}
+.plug-drawer{position:fixed;top:41px;right:0;bottom:27px;width:min(400px,92vw);z-index:38;display:flex;flex-direction:column;background:var(--surface);border-left:1px solid var(--line);box-shadow:var(--shadow);animation:pdIn .16s ease-out}
+@keyframes pdIn{from{transform:translateX(16px);opacity:0}}
+@media (prefers-reduced-motion:reduce){.plug-drawer{animation:none}}
+.pd-h{display:flex;align-items:center;gap:8px;padding:8px 8px 8px 14px;border-bottom:1px solid var(--line)}
+.pd-t{display:flex;align-items:center;gap:8px;flex:1;min-width:0;font-size:13px}
+.pd-t i{color:var(--accent)}
+.pd-t small{color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pd-body{flex:1;min-height:0;display:flex}
+.plug-sb i{color:var(--accent)}
+.pl-bar{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 10px}
+.pl-row{display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-bottom:1px solid var(--line)}
+.pl-ic{width:34px;height:34px;flex:none;border-radius:9px;display:grid;place-items:center;background:var(--hover);color:var(--muted);font-size:15px}
+.pl-row.on .pl-ic{background:var(--accent-soft);color:var(--accent)}
+.pl-main{flex:1;min-width:0;display:grid;gap:5px}
+.pl-top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:13px}
+.pl-v{color:var(--muted);font-size:11.5px}
+.pl-d{font-size:12.5px;color:var(--muted);line-height:1.45}
+.pl-perms{display:flex;flex-wrap:wrap;gap:5px}
+.pl-perm{display:inline-flex;align-items:center;gap:5px;font:500 10.5px var(--f-mono);padding:1px 7px;border-radius:999px;background:var(--hover);color:var(--muted)}
+.pl-perm.risky{background:var(--warn-soft);color:var(--warn)}
+.pl-perm.none{font-family:inherit}
+.pl-warn{display:flex;align-items:flex-start;gap:6px;font-size:12px;color:var(--warn);line-height:1.4;overflow-wrap:anywhere}
+.pl-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+.pl-acts .btn{font-size:11.5px;padding:3px 9px}
+.pl-acts .btn[disabled]{opacity:.45}
+.pl-empty{display:grid;justify-items:center;gap:6px;text-align:center;padding:26px 12px;color:var(--muted);font-size:12.5px;border:1px dashed var(--line);border-radius:10px}
+.pl-empty i{font-size:22px;color:var(--accent)}
+.pl-empty b{color:var(--fg)}
+.sw[disabled]{opacity:.4;cursor:not-allowed}
+
+/* plugin sections in the right column */
+.plug-side{flex:none;display:flex;flex-direction:column;border-top:1px solid var(--line);max-height:75%;overflow:auto}
+.plug-side[hidden]{display:none}
+.psec + .psec{border-top:1px solid var(--line)}
+.psec-h{width:100%;border:0;background:none;cursor:pointer;text-align:left}
+.psec-h:hover{color:var(--fg)}
+.psec-t{display:flex;align-items:center;gap:7px;min-width:0}
+.psec-t i{color:var(--accent);font-size:11px}
+.psec-car{font-size:10px;transition:transform .15s}
+.psec.collapsed .psec-car{transform:rotate(-90deg)}
+.psec-b{display:flex}
+.psec.collapsed .psec-b{display:none}
+.psec .plug-frame{flex:1;width:100%;background:var(--surface)}
+/* side panel frames float in one layer over their section's slot (see syncSide in plugins.js) */
+.plug-layer{position:fixed;inset:0;pointer-events:none;z-index:20}
+.plug-float{position:absolute;border:0;pointer-events:auto;background:var(--surface)}
+.plug-side-ide{border-top:1px solid var(--line);max-height:70%}
+.plug-side-ide .psec-h{padding:10px 12px 6px}

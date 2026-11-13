@@ -65,7 +65,7 @@
 
   /* ---------------- dialogs ---------------- */
   let open = null;
-  function dialog({ title, message = '', detail = '', ok = 'Tamam', cancel = 'Vazgeç', danger = false, icon, alert = false }) {
+  function dialog({ title, message = '', detail = '', ok = 'Tamam', cancel = 'Vazgeç', danger = false, icon, alert = false, input = null, placeholder = '', maxLength = 200 }) {
     if (open) open.finish(false);
     hideTip();
     return new Promise(resolve => {
@@ -75,9 +75,10 @@
       const ic = icon || (danger ? 'fa-triangle-exclamation' : alert ? 'fa-circle-info' : 'fa-circle-question');
       bg.innerHTML = `<div class="ui-dlg${danger ? ' danger' : ''}" role="${alert ? 'alertdialog' : 'dialog'}" aria-modal="true" aria-labelledby="uiDlgT" aria-describedby="uiDlgM">
         <div class="ui-dlg-h"><i class="fa-solid ${ic}"></i><b id="uiDlgT">${escT(title || 'VoxStorm')}</b></div>
-        <div class="ui-dlg-m" id="uiDlgM">${escT(message).replace(/\n/g, '<br>')}${detail ? `<p>${escT(detail).replace(/\n/g, '<br>')}</p>` : ''}</div>
+        <div class="ui-dlg-m" id="uiDlgM">${escT(message).replace(/\n/g, '<br>')}${detail ? `<p>${escT(detail).replace(/\n/g, '<br>')}</p>` : ''}${input != null ? `<input class="ui-dlg-in" type="text" spellcheck="false" maxlength="${+maxLength || 200}" value="${escT(input)}" placeholder="${escT(placeholder)}" aria-label="${escT(title || message)}">` : ''}</div>
         <div class="ui-dlg-f">${alert ? '' : `<button class="btn" data-r="0">${escT(cancel)}</button>`}<button class="btn primary${danger ? ' danger' : ''}" data-r="1">${escT(ok)}</button></div>
       </div>`;
+      const inp = bg.querySelector('.ui-dlg-in');
       const finish = r => {
         if (open !== state) return;
         open = null;
@@ -85,14 +86,14 @@
         bg.classList.remove('in');
         setTimeout(() => bg.remove(), 120);
         if (prev && prev.isConnected && prev.focus) try { prev.focus(); } catch (_) {}
-        resolve(r);
+        resolve(inp ? (r ? inp.value : null) : r);
       };
       const state = { finish };
       const onKey = e => {
         e.stopImmediatePropagation();
         if (e.key === 'Escape') { e.preventDefault(); finish(alert); }
         else if (e.key === 'Tab') {
-          const bs = [...bg.querySelectorAll('button')], i = bs.indexOf(document.activeElement);
+          const bs = [...bg.querySelectorAll('input,button')], i = bs.indexOf(document.activeElement);
           e.preventDefault(); bs[(i + (e.shiftKey ? bs.length - 1 : 1)) % bs.length].focus();
         }
         else if (e.key === 'Enter' && document.activeElement && document.activeElement.dataset.r == null) { e.preventDefault(); finish(true); }
@@ -103,10 +104,13 @@
       open = state;
       document.body.appendChild(bg);
       requestAnimationFrame(() => bg.classList.add('in'));
-      // destructive questions start on the safe button
-      (bg.querySelector(danger && !alert ? '[data-r="0"]' : '[data-r="1"]')).focus();
+      // a text box starts focused with its text selected; destructive questions start on the safe button
+      if (inp) { inp.focus(); inp.select(); }
+      else (bg.querySelector(danger && !alert ? '[data-r="0"]' : '[data-r="1"]')).focus();
     });
   }
   window.uiConfirm = opts => dialog(typeof opts === 'string' ? { message: opts } : opts);
+  // resolves to the typed text, or null when cancelled
+  window.uiPrompt = opts => dialog(Object.assign({ input: '' }, opts));
   window.uiAlert = opts => dialog(Object.assign({ alert: true }, typeof opts === 'string' ? { message: opts } : opts));
 })();

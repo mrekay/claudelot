@@ -1,0 +1,10 @@
+{
+  "id": "hizli-notlar",
+  "name": "Hızlı Notlar",
+  "version": "1.0.0",
+  "description": "Örnek eklenti: üst çubuğa not düğmesi, sağdan açılan not paneli, Ctrl+Alt+K kısayolu ve oturumları gösteren bir mod sekmesi ekler.",
+  "author": "VoxStorm",
+  "icon": "fa-solid fa-note-sticky",
+  "main": "main.js",
+  "permissions": ["storage", "notify"]
+}

@@ -25,7 +25,7 @@ const SHELL_ICONS = {
 const SHELLS = { pwsh: { name: 'PowerShell', exe: 'powershell' }, cmd: { name: 'Komut İstemi', exe: 'cmd.exe' }, bash: { name: 'Git Bash', exe: 'bash.exe' } };
 const STATUS_TEXT = { running: 'Çalışıyor', waiting: 'Kararını bekliyor', done: 'Bitti', idle: 'Hazır', exited: 'Kapandı', shell: 'Terminal' };
 const STATUS_SHORT = { running: 'çalışıyor', waiting: 'bekliyor', done: 'bitti', idle: 'açık', exited: 'kapandı', shell: 'terminal' };
-const ICONS = { done: '<i class="fa-solid fa-check"></i>', decision: '<i class="fa-solid fa-hand"></i>', subagent: '<i class="fa-solid fa-robot"></i>', workflow: '<i class="fa-solid fa-diagram-project"></i>', system: '<i class="fa-solid fa-circle-info"></i>' };
+const ICONS = { done: '<i class="fa-solid fa-check"></i>', decision: '<i class="fa-solid fa-hand"></i>', subagent: '<i class="fa-solid fa-robot"></i>', workflow: '<i class="fa-solid fa-diagram-project"></i>', system: '<i class="fa-solid fa-circle-info"></i>', plugin: '<i class="fa-solid fa-puzzle-piece"></i>' };
 const SUB_TOOLS = new Set(['Task', 'Agent']);
 const MODELS = [['', 'Claude Code varsayılanı'], ['opus', 'Opus (en güncel)'], ['sonnet', 'Sonnet (en güncel)'], ['haiku', 'Haiku (en güncel)'], ['fable', 'Fable (en güncel)'], ['__custom', 'Başka bir model…']];
 const EFFORTS = [['', 'Varsayılan'], ['low', 'Düşük'], ['medium', 'Orta'], ['high', 'Yüksek'], ['xhigh', 'Çok yüksek'], ['max', 'Maksimum']];
@@ -144,6 +144,7 @@ function applySkin(k) {
   if (k === 'violet') delete document.documentElement.dataset.skin; else document.documentElement.dataset.skin = k;
   const th = termTheme();
   S.tabs.forEach(t => { if (t.term) t.term.options.theme = th; });
+  if (window.pluginHost) pluginHost.themeChanged();
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applySkin(CFG.settings.skin));
 function renderSkinMenu() {
@@ -312,7 +313,7 @@ api.on('hook', ev => {
   if (name === 'SessionStart' && t.pendingPrompt) sendPendingPrompt(t);
   if (name === 'UserPromptSubmit') {
     clearPending(t); t.status = 'running';
-    if (t.title === 'Yeni oturum' && ev.prompt) t.title = shorten(ev.prompt, 48);
+    if (t.title === 'Yeni oturum' && !t.renamed && ev.prompt) t.title = shorten(ev.prompt, 48);
     if (!t.prompted) { t.prompted = true; saveOpenTabs(); }
   } else if (name === 'PreToolUse') {
     S.lastTool[t.id] = { tool, input };
@@ -767,7 +768,7 @@ function renderStatus() {
   const u = S.usage;
   const usageChip = u ? `<button class="sb-chip" data-report="1" title="Bu hafta · aylık rapor için tıkla (Ctrl+Shift+R)"><i class="fa-solid fa-chart-column"></i> ${fmtTok(u.total)} token${u.cost != null ? ' · ≈ ' + fmtUsd(u.cost) : ''}</button>` : '';
   $('#statusbar').innerHTML = `<span><b>${running}</b> çalışıyor</span><span><b>${pendingCount()}</b> karar bekliyor</span>${S.live.length ? `<span title="VoxStorm dışında açık Claude oturumları"><b>${S.live.length}</b> dışarıda</span>` : ''}<span><b>${S.agents.length}</b> ajan / workflow</span><span><b>${S.tabs.filter(t => !t.exited).length}</b> açık terminal</span>`
-    + `<span style="margin-left:auto"></span>${usageChip}`
+    + (window.pluginHost ? pluginHost.statusHtml() : '') + `<span style="margin-left:auto"></span>${usageChip}`
     + `<button class="sb-chip" data-settab="claude" title="Yeni Claude oturumlarının varsayılanları · değiştirmek için tıkla"><i class="fa-solid fa-sliders"></i> ${esc(claudeSummary())}</button>`
     + `<span class="${claudeOk ? '' : 'warn'}">${claudeOk ? 'Claude Code bağlı' : 'claude komutu bulunamadı'} · bildirim portu ${INFO ? INFO.hookPort : '-'}</span>`;
   const pb = $('#pillBadge'); pb.hidden = !pendingCount() || S.mode !== 'ide'; pb.textContent = pendingCount();
@@ -795,6 +796,7 @@ function renderAll() {
   if (typeof GIT !== 'undefined' && projectHere() !== GIT.btnPid) scheduleGitBtn(true);
   if (S.mode === 'ide') renderIde();
   if (!$('#pop').hidden) renderPop();
+  if (window.pluginHost) pluginHost.onRender();
 }
 
 /* ---------------- IDE mode ---------------- */
@@ -809,11 +811,12 @@ const MODES = {
   md: 'markdown', markdown: 'markdown', py: 'python', go: 'go', rs: 'rust', c: 'text/x-csrc', h: 'text/x-csrc', cpp: 'text/x-c++src', hpp: 'text/x-c++src', cc: 'text/x-c++src',
   cs: 'text/x-csharp', java: 'text/x-java', kt: 'text/x-kotlin', dart: 'text/x-java', sh: 'shell', bash: 'shell', ps1: 'powershell', psm1: 'powershell',
   yml: 'yaml', yaml: 'yaml', sql: 'sql', toml: 'toml', dockerfile: 'dockerfile', gd: 'python',
+  php: 'application/x-httpd-php', phtml: 'application/x-httpd-php', php3: 'application/x-httpd-php', php4: 'application/x-httpd-php', php5: 'application/x-httpd-php', php7: 'application/x-httpd-php', php8: 'application/x-httpd-php', phps: 'application/x-httpd-php', inc: 'application/x-httpd-php',
 };
 const LANG_NAMES = {
   javascript: 'JavaScript', jsx: 'JSX', 'text/typescript': 'TypeScript', 'text/typescript-jsx': 'TSX', 'application/json': 'JSON', css: 'CSS', 'text/x-scss': 'SCSS',
   'text/x-less': 'Less', htmlmixed: 'HTML', xml: 'XML', markdown: 'Markdown', python: 'Python', go: 'Go', rust: 'Rust', 'text/x-csrc': 'C', 'text/x-c++src': 'C++',
-  'text/x-csharp': 'C#', 'text/x-java': 'Java', 'text/x-kotlin': 'Kotlin', shell: 'Shell', powershell: 'PowerShell', yaml: 'YAML', sql: 'SQL', toml: 'TOML', dockerfile: 'Dockerfile',
+  'text/x-csharp': 'C#', 'text/x-java': 'Java', 'text/x-kotlin': 'Kotlin', shell: 'Shell', powershell: 'PowerShell', yaml: 'YAML', sql: 'SQL', toml: 'TOML', dockerfile: 'Dockerfile', 'application/x-httpd-php': 'PHP',
 };
 const extOf = p => { const b = p.split(/[\\/]/).pop().toLowerCase(); return b === 'dockerfile' ? 'dockerfile' : (b.includes('.') ? b.split('.').pop() : ''); };
 const baseName = p => p.split(/[\\/]/).pop();
@@ -1744,11 +1747,13 @@ function bindIde() {
 
 /* ---------------- mode ---------------- */
 function setMode(m, initial) {
+  if (String(m).startsWith('plugin:') && !(window.pluginHost && pluginHost.hasMode(m))) m = 'claude';
   S.mode = m;
   $$('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
   $('#claudeView').hidden = m !== 'claude';
   $('#ideView').hidden = m !== 'ide';
   $('#dbView').hidden = m !== 'db';
+  if (window.pluginHost) pluginHost.onMode(m);
   const host = $('#termHost');
   (m === 'ide' ? $('#ideSlot') : $('#centerSlot')).appendChild(host);
   if (m === 'ide') {
@@ -1957,7 +1962,7 @@ function openSettings(tab) {
 function renderSettings() {
   if ($('#settings').hidden) return;
   const st = CFG.settings;
-  $('#setNav').innerHTML = [['claude', 'Claude oturumları'], ['hitap', 'Hitap ve dil'], ['tema', 'Tema'], ['bildirim', 'Bildirimler'], ['pencere', 'Pencere'], ['kisayol', 'Kısayollar'], ['hakkinda', 'Hakkında']].map(([k, l]) => `<button class="set-tab ${k === setTab ? 'on' : ''}" data-settab="${k}">${l}</button>`).join('');
+  $('#setNav').innerHTML = [['claude', 'Claude oturumları'], ['hitap', 'Hitap ve dil'], ['tema', 'Tema'], ['bildirim', 'Bildirimler'], ['pencere', 'Pencere'], ['eklenti', 'Eklentiler'], ['kisayol', 'Kısayollar'], ['hakkinda', 'Hakkında']].map(([k, l]) => `<button class="set-tab ${k === setTab ? 'on' : ''}" data-settab="${k}">${l}</button>`).join('');
   let h = '';
   if (setTab === 'hitap') {
     h = `<h4>Claude sana nasıl hitap etsin?</h4>
@@ -2007,7 +2012,7 @@ function renderSettings() {
       + `<div class="set-row"><span>Windows açılınca başlat<small>Doğrudan sistem tepsisine başlar</small></span>${sw('data-set="autostart"', st.autostart, 'Windows ile başlat')}</div>`
       + '<p class="set-note">Uygulamadan tamamen çıkmak için: sistem tepsisindeki simgeye sağ tıkla → Çık.</p>';
   } else {
-    h = setTab === 'kisayol' ? kisayolHTML() : updateHTML() + `<h4>Bağlantı</h4><div class="kv">
+    h = setTab === 'eklenti' ? (window.pluginHost ? pluginHost.settingsHtml() : '') : setTab === 'kisayol' ? kisayolHTML() : updateHTML() + `<h4>Bağlantı</h4><div class="kv">
       <span>Claude Code</span><span>${INFO.claude ? `<code>${esc(INFO.claude)}</code>` : '<b style="color:var(--warn)">Bulunamadı.</b> Claude Code kurulu ve PATH içinde olmalı.'}</span>
       <span>Bildirim portu</span><span><code>127.0.0.1:${INFO.hookPort}</code></span>
       <span>Hook ayarları</span><span><code>${esc(INFO.hookSettings)}</code></span>
@@ -2026,6 +2031,14 @@ function updatePromptPreview() {
 /* ---------------- events ---------------- */
 function closeMenus() { $('#newMenu').hidden = true; $('#skinMenu').hidden = true; $('#pop').hidden = true; closeIdeMenu(); }
 function bindEvents() {
+  // right click on a session (top tab, sidebar row, past session): rename it
+  document.addEventListener('contextmenu', e => {
+    const el = e.target.closest('#tabs [data-tab], #ptabs [data-tab], #side [data-tab], #side [data-watch], #side [data-resume], #newMenu [data-resume]');
+    if (!el) return;
+    e.preventDefault();
+    $('#newMenu').hidden = true;
+    renameSessionUi(el);
+  });
   document.addEventListener('click', async e => {
     const el = e.target.closest('button,[data-tab],tr[data-month]');
     if (!e.target.closest('#newMenu,[data-newmenu],[data-projmenu]')) $('#newMenu').hidden = true;
@@ -2217,6 +2230,34 @@ function toolbar(a) {
 }
 
 /* remember which terminals are open, so they can be restored next time */
+/* rename a session: an open tab (any kind), an outside session being watched, or a past one.
+   Claude sessions keep the name in their transcript, like Claude Code's /rename. */
+async function renameSessionUi(el) {
+  const d = el.dataset;
+  const t = d.tab ? tabById(d.tab) : d.watch ? S.tabs.find(x => x.kind === 'watch' && x.sessionId === d.watch) : null;
+  const sid = t ? t.sessionId : d.watch || d.resume || '';
+  const pid = t ? t.projectId : d.pid;
+  const ext = d.watch ? S.live.find(x => x.sessionId === d.watch) : null;
+  const h = d.resume ? (S.history[pid] || []).find(x => x.id === d.resume) : null;
+  const cur = t ? t.title : ext ? ext.title : h ? h.title : '';
+  const isClaude = t ? t.kind !== 'shell' : true;
+  const name = await uiPrompt({
+    title: isClaude ? 'Oturumu yeniden adlandır' : 'Terminali yeniden adlandır', icon: 'fa-i-cursor',
+    input: cur, ok: 'Kaydet', maxLength: 120,
+    detail: isClaude && sid ? 'Ad oturum kaydına yazılır; Claude Code’un /resume listesinde de görünür.' : '',
+  });
+  const v = name == null ? '' : name.replace(/\s+/g, ' ').trim();
+  if (!v || v === cur) return;
+  if (t) { t.title = shorten(v, 48); t.renamed = true; }
+  if (isClaude && sid) {
+    const p = proj(pid);
+    const r = await api.invoke('session:rename', sid, (p && p.path) || (ext && ext.cwd) || '', v).catch(e => ({ ok: false, error: e.message }));
+    if (!r.ok) uiAlert({ title: 'Ad kaydedilemedi', message: r.error || 'Bilinmeyen hata.' });
+    if (pid) await refreshHistory(pid);
+  }
+  saveOpenTabs();
+  renderAll();
+}
 function saveOpenTabs() {
   const list = S.tabs
     .filter(t => !t.exited && (t.kind === 'shell' || (t.sessionId && t.prompted)))
@@ -2922,6 +2963,7 @@ async function init() {
   setInterval(refreshUsage, 120000);
   setInterval(renderSide, 60000);
   setInterval(() => refreshAllHistory().then(renderSide), 180000);
+  if (window.pluginHost) pluginHost.init();
   handleOpen(await api.invoke('app:takePendingOpen'));
 }
 init();
